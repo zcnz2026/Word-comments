@@ -152,6 +152,7 @@
       const tb = document.getElementById('selToolbar');
       if (!tb.hidden && !tb.contains(e.target)) {
         tb.hidden = true;
+        ui.currentSelection = null;
       }
     });
 
@@ -168,6 +169,16 @@
         if (ev.key.toLowerCase() === 'y' || (ev.key.toLowerCase() === 'z' && ev.shiftKey)) {
           ev.preventDefault();
           redo();
+          return;
+        }
+        if (ev.key.toLowerCase() === 'b' && ui.currentSelection) {
+          ev.preventDefault();
+          window.toggleSelectionBold();
+          return;
+        }
+        if (ev.key.toLowerCase() === 'u' && ui.currentSelection) {
+          ev.preventDefault();
+          window.toggleSelectionUnderline();
           return;
         }
       }
@@ -616,21 +627,27 @@
         if (tok.hl === 'cyan') cls.push('hl-cyan');
         else if (tok.hl === 'green') cls.push('hl-green');
         else if (tok.hl === 'yellow') cls.push('hl-yellow');
+        else if (tok.hl === 'magenta') cls.push('hl-magenta');
+        else if (tok.hl === 'lightGray' || tok.hl === 'darkGray') cls.push('hl-gray');
+
+        if (tok.bold) cls.push('fmt-bold');
+        if (tok.underline) cls.push('fmt-underline');
 
         if (focusHit) {
           cls.push(focusHit.kind === 'green' ? 'hl-focus-green' : 'hl-focus-cyan');
         }
 
         const thAttr = linkedThreadId ? `data-thread-id="${linkedThreadId}"` : '';
+        const styleAttr = tok.color ? `style="color:#${escHtml(tok.color)}"` : '';
 
         if (tok.kind === 'rev') {
-          htmlOut += `<span class="${cls.join(' ')} rev-chip" data-row="${rowIdx}" data-col="${colIdx}" data-p="${pIdx}" data-start="${segA}" data-end="${segB}" onclick="window.onRevTokenClick(event, ${rowIdx}, ${colIdx}, ${pIdx}, '${tok.id}')" title="修订人：${escHtml(tok.author)}（点击可接受/拒绝此修订）">`;
+          htmlOut += `<span class="${cls.join(' ')} rev-chip" ${styleAttr} data-row="${rowIdx}" data-col="${colIdx}" data-p="${pIdx}" data-start="${segA}" data-end="${segB}" onclick="window.onRevTokenClick(event, ${rowIdx}, ${colIdx}, ${pIdx}, '${tok.id}')" title="修订人：${escHtml(tok.author)}（点击可接受/拒绝此修订）">`;
           if (tok.delText) htmlOut += `<span class="rev-del">${escHtml(tok.delText)}</span>`;
           if (tok.insText) htmlOut += `<span class="rev-ins">${escHtml(tok.insText)}</span>`;
           htmlOut += `</span>`;
         } else {
           const subStr = tok.text.slice(segA - tokCursor, segB - tokCursor);
-          htmlOut += `<span class="${cls.join(' ')}" data-row="${rowIdx}" data-col="${colIdx}" data-p="${pIdx}" data-start="${segA}" data-end="${segB}" ${thAttr}>${escHtml(subStr)}</span>`;
+          htmlOut += `<span class="${cls.join(' ')}" ${styleAttr} data-row="${rowIdx}" data-col="${colIdx}" data-p="${pIdx}" data-start="${segA}" data-end="${segB}" ${thAttr}>${escHtml(subStr)}</span>`;
         }
 
         // Emit pins whose anchor.end === segB (excluding zero-length already emitted)
@@ -992,11 +1009,12 @@
 
     ui.currentSelection = { row: ptA.row, col: ptA.col, pIdx: ptA.pIdx, start, end, text: selectedText };
 
-    // Update mode-aware button label & bind button visibility
+    // Update mode-aware button label, formatting state & bind button visibility
     document.getElementById('selEditTextBtn').textContent =
       ui.editMode === 'track' ? '✏️ 修订改词' : '📝 直接改字';
     document.getElementById('selBindCyanBtn').hidden = !ui.activeThreadId;
     document.getElementById('selBindGreenBtn').hidden = !ui.activeThreadId;
+    refreshSelectionFormatButtons();
 
     tb.hidden = false;
     const top = Math.max(10, rect.top - tb.offsetHeight - 10);
@@ -1005,7 +1023,45 @@
     tb.style.left = `${left}px`;
   }
 
-  /* ==================== HIGHLIGHT, BIND, ADD/EDIT/DELETE/REPLY ==================== */
+  function refreshSelectionFormatButtons() {
+    const s = ui.currentSelection;
+    if (!s || !docState) return;
+    const fmt = Engine.getRangeFormatState(docState, s.row, s.col, s.pIdx, s.start, s.end);
+    document.getElementById('selBoldBtn').classList.toggle('is-on', !!fmt.allBold);
+    document.getElementById('selUnderlineBtn').classList.toggle('is-on', !!fmt.allUnderline);
+    const curColor = fmt.color || '';
+    document.querySelectorAll('#selToolbar .color-dot').forEach(btn => {
+      btn.classList.toggle('is-on', (btn.dataset.fcolor || '') === curColor);
+    });
+  }
+
+  /* ==================== FONT BOLD / UNDERLINE / COLOR & HIGHLIGHT ==================== */
+  window.toggleSelectionBold = function () {
+    const s = ui.currentSelection;
+    if (!s || !docState) return;
+    pushUndoSnapshot();
+    Engine.formatParagraphRange(docState, s.row, s.col, s.pIdx, s.start, s.end, { toggleBold: true });
+    renderWorkspace();
+    refreshSelectionFormatButtons();
+  };
+
+  window.toggleSelectionUnderline = function () {
+    const s = ui.currentSelection;
+    if (!s || !docState) return;
+    pushUndoSnapshot();
+    Engine.formatParagraphRange(docState, s.row, s.col, s.pIdx, s.start, s.end, { toggleUnderline: true });
+    renderWorkspace();
+    refreshSelectionFormatButtons();
+  };
+
+  window.applySelectionFontColor = function (hexColor) {
+    const s = ui.currentSelection;
+    if (!s || !docState) return;
+    pushUndoSnapshot();
+    Engine.formatParagraphRange(docState, s.row, s.col, s.pIdx, s.start, s.end, { color: hexColor || null });
+    renderWorkspace();
+    refreshSelectionFormatButtons();
+  };
   window.applySelectionHighlight = function (color) {
     const s = ui.currentSelection;
     if (!s || !docState) return;

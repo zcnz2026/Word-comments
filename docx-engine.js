@@ -93,14 +93,32 @@
   }
 
   function stripHighlightAndRefFromRPr(rPrEl) {
-    if (!rPrEl) return { hl: null, isCommentRef: false, baseXml: '' };
+    if (!rPrEl) return { hl: null, bold: false, underline: false, color: null, isCommentRef: false, baseXml: '' };
     const clone = rPrEl.cloneNode(true);
     let hl = null;
+    let bold = false;
+    let underline = false;
+    let color = null;
     let isCommentRef = false;
     for (const ch of Array.from(clone.childNodes)) {
       const ln = localNameOf(ch);
       if (ln === 'highlight') {
         hl = getAttrLocal(ch, 'val') || null;
+        if (hl === 'none') hl = null;
+        clone.removeChild(ch);
+      } else if (ln === 'b' || ln === 'bCs') {
+        const v = (getAttrLocal(ch, 'val') || '1').toLowerCase();
+        if (ln === 'b') bold = (v !== '0' && v !== 'false' && v !== 'off');
+        clone.removeChild(ch);
+      } else if (ln === 'u') {
+        const v = (getAttrLocal(ch, 'val') || 'single').toLowerCase();
+        underline = (v !== 'none' && v !== '0' && v !== 'false');
+        clone.removeChild(ch);
+      } else if (ln === 'color') {
+        const v = (getAttrLocal(ch, 'val') || '').toUpperCase().replace(/^#/, '');
+        if (/^[0-9A-F]{6}$/.test(v) && v !== '000000') {
+          color = v;
+        }
         clone.removeChild(ch);
       } else if (ln === 'rStyle') {
         const val = (getAttrLocal(ch, 'val') || '').toLowerCase();
@@ -111,7 +129,7 @@
       }
     }
     const ser = clone.childNodes.length ? new XMLSerializer().serializeToString(clone) : '';
-    return { hl, isCommentRef, baseXml: ser };
+    return { hl, bold, underline, color, isCommentRef, baseXml: ser };
   }
 
   function extractRunText(rEl, wantDel) {
@@ -148,14 +166,22 @@
       if (tok.kind === 'text') {
         if (!tok.text) continue;
         const prev = out[out.length - 1];
-        if (prev && prev.kind === 'text' && prev.hl === tok.hl && prev.rPrBaseXml === tok.rPrBaseXml) {
+        if (
+          prev &&
+          prev.kind === 'text' &&
+          prev.hl === tok.hl &&
+          !!prev.bold === !!tok.bold &&
+          !!prev.underline === !!tok.underline &&
+          (prev.color || null) === (tok.color || null) &&
+          prev.rPrBaseXml === tok.rPrBaseXml
+        ) {
           prev.text += tok.text;
         } else {
-          out.push({ ...tok });
+          out.push({ ...tok, bold: !!tok.bold, underline: !!tok.underline, color: tok.color || null });
         }
       } else {
         if (!tok.delText && !tok.insText) continue;
-        out.push({ ...tok });
+        out.push({ ...tok, bold: !!tok.bold, underline: !!tok.underline, color: tok.color || null });
       }
     }
     pModel.tokens = out;
@@ -222,7 +248,7 @@
               if (cid !== null) refPoints.set(String(cid), { row: rowIdx, col: colIdx, pIdx, offset: curOffset });
             }
           }
-          const { hl, isCommentRef, baseXml } = stripHighlightAndRefFromRPr(rPrEl);
+          const { hl, bold, underline, color, isCommentRef, baseXml } = stripHighlightAndRefFromRPr(rPrEl);
           if (!defaultRPrXml && baseXml && !isCommentRef && !hasCommentRef) {
             defaultRPrXml = baseXml;
           }
@@ -233,6 +259,9 @@
               kind: 'text',
               text: txt,
               hl: hl,
+              bold: !!bold,
+              underline: !!underline,
+              color: color || null,
               rPrBaseXml: baseXml || defaultRPrXml
             });
             curOffset += txt.length;
@@ -246,6 +275,9 @@
           let date = getAttrLocal(node, 'date') || nowIsoUtc();
           let baseXml = defaultRPrXml;
           let hl = null;
+          let bold = false;
+          let underline = false;
+          let color = null;
 
           const collectRuns = (el, isDel) => {
             let acc = '';
@@ -256,6 +288,9 @@
                   const info = stripHighlightAndRefFromRPr(rPr);
                   if (info.baseXml) baseXml = info.baseXml;
                   if (info.hl) hl = info.hl;
+                  if (info.bold) bold = true;
+                  if (info.underline) underline = true;
+                  if (info.color) color = info.color;
                 }
                 acc += extractRunText(c, isDel);
               }
@@ -289,6 +324,9 @@
               author,
               date,
               hl,
+              bold,
+              underline,
+              color,
               rPrBaseXml: baseXml
             };
             tokens.push(revTok);
@@ -755,17 +793,59 @@
     }
   }
 
-  /** Apply or clear highlight color (`'cyan'|'green'|'yellow'|null`) on [start, end) of (row, col, pIdx) */
+  /** Apply or clear highlight color (`'cyan'|'green'|'yellow'|'magenta'|'lightGray'|null`) on [start, end) */
   function setParaHighlight(docState, row, col, pIdx, start, end, color) {
+    formatParagraphRange(docState, row, col, pIdx, start, end, { hl: color || null });
+  }
+
+  /** Inspect current formatting state on [start, end) */
+  function getRangeFormatState(docState, row, col, pIdx, start, end) {
+    const p = docState.rows[row]?.cells[col]?.paras[pIdx];
+    if (!p || end <= start) return { allBold: false, allUnderline: false, color: null, hl: null };
+    let pos = 0;
+    let count = 0;
+    let allBold = true;
+    let allUnderline = true;
+    let firstColor = undefined;
+    let firstHl = undefined;
+    for (const tok of p.tokens) {
+      const len = tokenLen(tok);
+      if (pos + len > start && pos < end) {
+        count++;
+        if (!tok.bold) allBold = false;
+        if (!tok.underline) allUnderline = false;
+        if (firstColor === undefined) firstColor = tok.color || null;
+        if (firstHl === undefined) firstHl = tok.hl || null;
+      }
+      pos += len;
+    }
+    return {
+      allBold: count > 0 && allBold,
+      allUnderline: count > 0 && allUnderline,
+      color: firstColor || null,
+      hl: firstHl || null
+    };
+  }
+
+  /** Toggle or set bold, underline, font color, or highlight on [start, end) */
+  function formatParagraphRange(docState, row, col, pIdx, start, end, patch) {
     if (end <= start) return;
     const p = docState.rows[row].cells[col].paras[pIdx];
     splitTokensAt(p, start);
     splitTokensAt(p, end);
+
+    const cur = getRangeFormatState(docState, row, col, pIdx, start, end);
+    const nextBold = patch.toggleBold ? !cur.allBold : patch.bold;
+    const nextUnderline = patch.toggleUnderline ? !cur.allUnderline : patch.underline;
+
     let pos = 0;
     for (const tok of p.tokens) {
       const len = tokenLen(tok);
       if (pos >= start && pos + len <= end) {
-        tok.hl = color || null;
+        if (nextBold !== undefined) tok.bold = !!nextBold;
+        if (nextUnderline !== undefined) tok.underline = !!nextUnderline;
+        if (patch.color !== undefined) tok.color = patch.color ? String(patch.color).toUpperCase().replace(/^#/, '') : null;
+        if (patch.hl !== undefined) tok.hl = patch.hl || null;
       }
       pos += len;
     }
@@ -782,12 +862,20 @@
     let oldPlain = '';
     let sampleRPr = p.defaultRPrXml;
     let sampleHl = null;
+    let sampleBold = false;
+    let sampleUnderline = false;
+    let sampleColor = null;
 
     for (let i = 0; i < p.tokens.length; i++) {
       const tok = p.tokens[i];
       const len = tokenLen(tok);
       if (pos >= start && pos + len <= end) {
-        if (firstIdx < 0) firstIdx = i;
+        if (firstIdx < 0) {
+          firstIdx = i;
+          sampleBold = !!tok.bold;
+          sampleUnderline = !!tok.underline;
+          sampleColor = tok.color || null;
+        }
         lastIdx = i;
         if (tok.rPrBaseXml) sampleRPr = tok.rPrBaseXml;
         if (tok.hl) sampleHl = tok.hl;
@@ -796,6 +884,9 @@
         firstIdx = i;
         lastIdx = i - 1;
         if (tok.rPrBaseXml) sampleRPr = tok.rPrBaseXml;
+        sampleBold = !!tok.bold;
+        sampleUnderline = !!tok.underline;
+        sampleColor = tok.color || null;
       }
       pos += len;
     }
@@ -818,6 +909,9 @@
         author: author || '审校',
         date: nowIsoUtc(),
         hl: sampleHl,
+        bold: sampleBold,
+        underline: sampleUnderline,
+        color: sampleColor,
         rPrBaseXml: sampleRPr
       };
       replacement = [revTok];
@@ -829,6 +923,9 @@
           kind: 'text',
           text: newText,
           hl: sampleHl,
+          bold: sampleBold,
+          underline: sampleUnderline,
+          color: sampleColor,
           rPrBaseXml: sampleRPr
         }];
       }
@@ -856,6 +953,9 @@
             kind: 'text',
             text: finalStr,
             hl: tok.hl,
+            bold: !!tok.bold,
+            underline: !!tok.underline,
+            color: tok.color || null,
             rPrBaseXml: tok.rPrBaseXml
           });
         } else {
@@ -873,7 +973,28 @@
 
   /* ==================== LOSSLESS .DOCX SERIALIZATION ==================== */
 
-  function createRunElement(docDom, rPrBaseXml, hlColor, textContent, isDelText) {
+  const RPR_ORDER = [
+    'rStyle', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'caps', 'smallCaps', 'strike', 'dstrike',
+    'outline', 'shadow', 'emboss', 'imprint', 'noProof', 'snapToGrid', 'vanish', 'webHidden',
+    'color', 'spacing', 'w', 'kern', 'position', 'sz', 'szCs', 'highlight', 'u',
+    'effect', 'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em', 'lang',
+    'eastAsianLayout', 'specVanish', 'oMath'
+  ];
+  const RPR_RANK = new Map(RPR_ORDER.map((name, idx) => [name, idx]));
+
+  function insertRPrChildOrdered(rPr, newEl) {
+    const targetRank = RPR_RANK.has(localNameOf(newEl)) ? RPR_RANK.get(localNameOf(newEl)) : 999;
+    for (const ch of Array.from(rPr.childNodes)) {
+      const chRank = RPR_RANK.has(localNameOf(ch)) ? RPR_RANK.get(localNameOf(ch)) : 999;
+      if (chRank > targetRank) {
+        rPr.insertBefore(newEl, ch);
+        return;
+      }
+    }
+    rPr.appendChild(newEl);
+  }
+
+  function createRunElement(docDom, rPrBaseXml, styleProps, textContent, isDelText) {
     const r = docDom.createElementNS(W_NS, 'w:r');
     let rPr = null;
     if (rPrBaseXml) {
@@ -882,19 +1003,33 @@
         rPr = docDom.importNode(parsed, true);
       } catch (e) {}
     }
-    if (hlColor) {
+    const ensureRPr = () => {
       if (!rPr) rPr = docDom.createElementNS(W_NS, 'w:rPr');
+      return rPr;
+    };
+
+    if (styleProps && styleProps.bold) {
+      const rp = ensureRPr();
+      insertRPrChildOrdered(rp, docDom.createElementNS(W_NS, 'w:b'));
+      insertRPrChildOrdered(rp, docDom.createElementNS(W_NS, 'w:bCs'));
+    }
+    if (styleProps && styleProps.color) {
+      const rp = ensureRPr();
+      const cEl = docDom.createElementNS(W_NS, 'w:color');
+      cEl.setAttributeNS(W_NS, 'w:val', styleProps.color);
+      insertRPrChildOrdered(rp, cEl);
+    }
+    if (styleProps && styleProps.hl) {
+      const rp = ensureRPr();
       const hlEl = docDom.createElementNS(W_NS, 'w:highlight');
-      hlEl.setAttributeNS(W_NS, 'w:val', hlColor);
-      let inserted = false;
-      for (const ch of Array.from(rPr.childNodes)) {
-        if (AFTER_HL.has(localNameOf(ch))) {
-          rPr.insertBefore(hlEl, ch);
-          inserted = true;
-          break;
-        }
-      }
-      if (!inserted) rPr.appendChild(hlEl);
+      hlEl.setAttributeNS(W_NS, 'w:val', styleProps.hl);
+      insertRPrChildOrdered(rp, hlEl);
+    }
+    if (styleProps && styleProps.underline) {
+      const rp = ensureRPr();
+      const uEl = docDom.createElementNS(W_NS, 'w:u');
+      uEl.setAttributeNS(W_NS, 'w:val', 'single');
+      insertRPrChildOrdered(rp, uEl);
     }
     if (rPr && rPr.childNodes.length > 0) {
       r.appendChild(rPr);
@@ -999,15 +1134,16 @@
 
     for (const tok of workP.tokens) {
       const len = tokenLen(tok);
+      const sp = { hl: tok.hl, bold: !!tok.bold, underline: !!tok.underline, color: tok.color || null };
       if (tok.kind === 'text') {
-        origPEl.appendChild(createRunElement(docDom, tok.rPrBaseXml || workP.defaultRPrXml, tok.hl, tok.text, false));
+        origPEl.appendChild(createRunElement(docDom, tok.rPrBaseXml || workP.defaultRPrXml, sp, tok.text, false));
       } else if (tok.kind === 'rev') {
         if (tok.delText.length > 0) {
           const delEl = docDom.createElementNS(W_NS, 'w:del');
           delEl.setAttributeNS(W_NS, 'w:id', String(revIdCounter.val++));
           delEl.setAttributeNS(W_NS, 'w:author', tok.author || '审校');
           delEl.setAttributeNS(W_NS, 'w:date', tok.date || nowIsoUtc());
-          delEl.appendChild(createRunElement(docDom, tok.rPrBaseXml || workP.defaultRPrXml, tok.hl, tok.delText, true));
+          delEl.appendChild(createRunElement(docDom, tok.rPrBaseXml || workP.defaultRPrXml, sp, tok.delText, true));
           origPEl.appendChild(delEl);
         }
         if (tok.insText.length > 0) {
@@ -1015,7 +1151,7 @@
           insEl.setAttributeNS(W_NS, 'w:id', String(revIdCounter.val++));
           insEl.setAttributeNS(W_NS, 'w:author', tok.author || '审校');
           insEl.setAttributeNS(W_NS, 'w:date', tok.date || nowIsoUtc());
-          insEl.appendChild(createRunElement(docDom, tok.rPrBaseXml || workP.defaultRPrXml, tok.hl, tok.insText, false));
+          insEl.appendChild(createRunElement(docDom, tok.rPrBaseXml || workP.defaultRPrXml, sp, tok.insText, false));
           origPEl.appendChild(insEl);
         }
       }
@@ -1233,6 +1369,8 @@
     cellOffsetToParaOffset,
     paraOffsetToCellOffset,
     setParaHighlight,
+    formatParagraphRange,
+    getRangeFormatState,
     editParagraphRange,
     resolveTrackToken,
     sortThreadsInPlace,

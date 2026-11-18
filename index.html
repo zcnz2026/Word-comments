@@ -102,16 +102,40 @@
     <aside class="comments-pane" id="commentsPane" aria-label="批注与多轮回复列表"></aside>
   </main>
 
-  <!-- Floating Selection Action Bar -->
+  <!-- Floating Word-Style Mini Formatting & Comment Bar -->
   <div class="sel-toolbar" id="selToolbar" hidden>
-    <button type="button" class="sel-btn" onclick="window.openNewCommentModalFromSelection()">➕ 加批注</button>
-    <button type="button" class="sel-btn" id="selEditTextBtn" onclick="window.openEditTextModalFromSelection()">✏️ 修订改词</button>
-    <button type="button" class="sel-btn" id="selBindCyanBtn" onclick="window.bindSelectionToActiveThread('cyan')">🔗 绑到当前批注(青)</button>
-    <button type="button" class="sel-btn" id="selBindGreenBtn" onclick="window.bindSelectionToActiveThread('green')">🌿 绑参照词(绿)</button>
-    <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('cyan')"><span class="swatch-dot" style="background:#38bdf8"></span>青</button>
-    <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('green')"><span class="swatch-dot" style="background:#4ade80"></span>绿</button>
-    <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('yellow')"><span class="swatch-dot" style="background:#facc15"></span>黄</button>
-    <button type="button" class="sel-btn" onclick="window.applySelectionHighlight(null)">清除底色</button>
+    <div class="sel-row">
+      <button type="button" class="sel-btn" onclick="window.openNewCommentModalFromSelection()">➕ 加批注</button>
+      <button type="button" class="sel-btn" id="selEditTextBtn" onclick="window.openEditTextModalFromSelection()">✏️ 修订改词</button>
+      <button type="button" class="sel-btn" id="selBindCyanBtn" onclick="window.bindSelectionToActiveThread('cyan')">🔗 绑批注(青)</button>
+      <button type="button" class="sel-btn" id="selBindGreenBtn" onclick="window.bindSelectionToActiveThread('green')">🌿 绑参照(绿)</button>
+      <span class="sel-sep"></span>
+      <button type="button" class="sel-btn fmt-btn" id="selBoldBtn" onclick="window.toggleSelectionBold()" title="加粗 (Ctrl+B)"><strong>B</strong> 加粗</button>
+      <button type="button" class="sel-btn fmt-btn" id="selUnderlineBtn" onclick="window.toggleSelectionUnderline()" title="下划线 (Ctrl+U)"><span style="text-decoration:underline">U</span> 下划线</button>
+    </div>
+
+    <div class="sel-row">
+      <span class="sel-label">字色</span>
+      <button type="button" class="color-dot" data-fcolor="" style="background:#0f172a;border-color:#94a3b8" title="自动（默认黑色）" onclick="window.applySelectionFontColor(null)"></button>
+      <button type="button" class="color-dot" data-fcolor="C00000" style="background:#C00000" title="深红 (#C00000)" onclick="window.applySelectionFontColor('C00000')"></button>
+      <button type="button" class="color-dot" data-fcolor="FF0000" style="background:#FF0000" title="红色 (#FF0000)" onclick="window.applySelectionFontColor('FF0000')"></button>
+      <button type="button" class="color-dot" data-fcolor="ED7D31" style="background:#ED7D31" title="橙色 (#ED7D31)" onclick="window.applySelectionFontColor('ED7D31')"></button>
+      <button type="button" class="color-dot" data-fcolor="FFC000" style="background:#FFC000" title="金色 (#FFC000)" onclick="window.applySelectionFontColor('FFC000')"></button>
+      <button type="button" class="color-dot" data-fcolor="92D050" style="background:#92D050" title="浅绿 (#92D050)" onclick="window.applySelectionFontColor('92D050')"></button>
+      <button type="button" class="color-dot" data-fcolor="00B050" style="background:#00B050" title="绿色 (#00B050)" onclick="window.applySelectionFontColor('00B050')"></button>
+      <button type="button" class="color-dot" data-fcolor="00B0F0" style="background:#00B0F0" title="浅蓝 (#00B0F0)" onclick="window.applySelectionFontColor('00B0F0')"></button>
+      <button type="button" class="color-dot" data-fcolor="0070C0" style="background:#0070C0" title="蓝色 (#0070C0)" onclick="window.applySelectionFontColor('0070C0')"></button>
+      <button type="button" class="color-dot" data-fcolor="002060" style="background:#002060;border-color:#64748b" title="深蓝 (#002060)" onclick="window.applySelectionFontColor('002060')"></button>
+      <button type="button" class="color-dot" data-fcolor="7030A0" style="background:#7030A0" title="紫色 (#7030A0)" onclick="window.applySelectionFontColor('7030A0')"></button>
+
+      <span class="sel-sep"></span>
+      <span class="sel-label">底色</span>
+      <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('cyan')" title="青色突出显示"><span class="swatch-dot" style="background:#38bdf8"></span>青</button>
+      <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('green')" title="绿色突出显示"><span class="swatch-dot" style="background:#4ade80"></span>绿</button>
+      <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('yellow')" title="黄色突出显示"><span class="swatch-dot" style="background:#facc15"></span>黄</button>
+      <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('magenta')" title="粉红突出显示"><span class="swatch-dot" style="background:#f472b6"></span>粉</button>
+      <button type="button" class="sel-btn" onclick="window.applySelectionHighlight(null)" title="清除突出显示底色">无底色</button>
+    </div>
   </div>
 
   <!-- Modal 1: Add / Edit Comment, Reply, or Text -->
@@ -193,7 +217,8 @@
         <ul class="help-list">
           <li><strong>新增批注</strong>：用鼠标在左侧中文（或英文）里<strong>拖选一段文字</strong> → 在弹出的深色悬浮工具条点击<strong>「➕ 加批注」</strong>输入内容即可（锚点自动标青色）。</li>
           <li><strong>绑定对应英文／参照词</strong>：先选中某条批注卡片使其处于激活状态，再用鼠标在英文列划选对应词，点悬浮工具条的<strong>「🔗 绑到当前批注(青)」</strong>或<strong>「🌿 绑参照词(绿)」</strong>即可关联到一起。</li>
-          <li><strong>自由涂／清底色</strong>：划选任意中英文文字，可直接点工具条上的<strong>青、绿、黄</strong>色块涂高亮，或点<strong>「清除底色」</strong>擦除高亮。</li>
+          <li><strong>字体格式（加粗／下划线／Word 标准字色）</strong>：划选任意中英文文字，即可在浮动工具条一键设置<strong>「B 加粗」</strong>（<kbd>Ctrl+B</kbd>）、<strong>「U 下划线」</strong>（<kbd>Ctrl+U</kbd>）以及 Word 常用的<strong>标准十色字体颜色</strong>（深红、红、橙、金、浅绿、绿、浅蓝、蓝、深蓝、紫及默认黑色），导出 `.docx` 后格式完全保留。</li>
+          <li><strong>自由涂／清底色</strong>：划选任意中英文文字，可直接点工具条上的<strong>青、绿、黄、粉</strong>色块涂突出显示底色，或点<strong>「无底色」</strong>擦除高亮。</li>
           <li><strong>多轮嵌套回复</strong>：先在顶部<strong>「署名」</strong>框填好你的名字（如 `LR`、`审校`、`译者`），在任意卡片底部的输入框打字按 `Enter`（或点「回复」）即可挂入多轮回复，导出 Word 后即为标准嵌套回复气泡。</li>
           <li><strong>删除批注自动清底色</strong>：点击卡片右上角「删除」，默认勾选<strong>“同时自动清除该批注绑定的中文与英文高亮底色”</strong>，省去在 Word 里手动一处处去底色的麻烦。</li>
         </ul>
@@ -212,6 +237,8 @@
         <div class="kbd-grid">
           <div><kbd>J</kbd> 或 <kbd>↓</kbd> 下一条批注</div>
           <div><kbd>K</kbd> 或 <kbd>↑</kbd> 上一条批注</div>
+          <div><kbd>Ctrl + B</kbd> 选中文字加粗</div>
+          <div><kbd>Ctrl + U</kbd> 选中文字加下划线</div>
           <div><kbd>Ctrl + Z</kbd> 撤销操作（支持 35 步）</div>
           <div><kbd>Ctrl + Y</kbd> 重做操作</div>
           <div><kbd>Enter</kbd> 发送卡片内回复</div>

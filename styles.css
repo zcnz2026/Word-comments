@@ -453,11 +453,30 @@ body.view-inline .comments-pane {
   cursor: pointer;
 }
 
+.hl-magenta {
+  background: rgba(244, 114, 182, 0.28);
+  border-bottom: 2px solid #db2777;
+}
+
+.hl-gray {
+  background: #e2e8f0;
+}
+
+.fmt-bold {
+  font-weight: 700;
+}
+
+.fmt-underline {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.8px;
+}
+
 /* Strong active zoom & spotlight requested by user (#1) */
 .hl-focus-cyan {
   display: inline;
   background: var(--cyan-focus) !important;
-  color: #082f49 !important;
+  color: #082f49;
   font-weight: 700;
   font-size: 1.07em;
   padding: 2px 5px;
@@ -469,7 +488,7 @@ body.view-inline .comments-pane {
 .hl-focus-green {
   display: inline;
   background: var(--green-focus) !important;
-  color: #052e16 !important;
+  color: #052e16;
   font-weight: 700;
   font-size: 1.05em;
   padding: 1px 4px;
@@ -760,18 +779,38 @@ body.view-inline .thread-card {
   z-index: 60;
   background: #0f172a;
   color: #ffffff;
-  border-radius: 10px;
-  padding: 6px 8px;
+  border-radius: 11px;
+  padding: 7px 10px;
   display: flex;
-  align-items: center;
-  gap: 5px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.32);
-  flex-wrap: wrap;
-  max-width: min(94vw, 660px);
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.36);
+  max-width: min(95vw, 720px);
 }
 
 .sel-toolbar[hidden] {
   display: none;
+}
+
+.sel-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.sel-sep {
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.22);
+  margin: 0 3px;
+}
+
+.sel-label {
+  font-size: var(--text-sm);
+  color: #94a3b8;
+  margin-right: 2px;
+  user-select: none;
 }
 
 .sel-btn {
@@ -781,7 +820,7 @@ body.view-inline .thread-card {
   font-family: inherit;
   font-size: var(--text-sm);
   font-weight: 600;
-  padding: 4px 9px;
+  padding: 3px 9px;
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
@@ -790,6 +829,33 @@ body.view-inline .thread-card {
 .sel-btn:hover {
   background: var(--accent);
   border-color: var(--accent);
+}
+
+.sel-btn.is-on {
+  background: var(--accent);
+  border-color: #7dd3fc;
+  color: #ffffff;
+}
+
+.color-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.color-dot:hover {
+  transform: scale(1.22);
+  border-color: #ffffff;
+}
+
+.color-dot.is-on {
+  transform: scale(1.22);
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .swatch-dot {
