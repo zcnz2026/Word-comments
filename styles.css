@@ -75,9 +75,9 @@ body {
   font-size: var(--text-sm);
   color: var(--muted);
   background: var(--surface-subtle);
-  padding: 3px 10px;
+  padding: 3px 9px;
   border-radius: 999px;
-  max-width: 220px;
+  max-width: 170px;
   flex-shrink: 1;
   white-space: nowrap;
   overflow: hidden;
@@ -257,24 +257,32 @@ body {
 /* ==================== EMPTY STATE DROPZONE ==================== */
 .drop-stage {
   flex: 1;
+  overflow-y: auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px;
+  padding: 24px 28px;
 }
 
 .drop-stage[hidden] {
   display: none;
 }
 
+.onboarding-wrap {
+  width: min(980px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .drop-card {
-  width: min(760px, 100%);
+  width: 100%;
   background: var(--surface);
   border: 2px dashed var(--border-strong);
   border-radius: 16px;
-  padding: 48px 36px;
+  padding: 38px 32px;
   text-align: center;
-  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+  transition: border-color 0.2s, background 0.2s;
   cursor: pointer;
 }
 
@@ -284,34 +292,43 @@ body {
 }
 
 .drop-headline {
-  font-size: clamp(1.55rem, 2.8vw, 2.1rem);
+  font-size: clamp(1.45rem, 2.6vw, 2rem);
   font-weight: 800;
   letter-spacing: -0.025em;
   color: var(--ink);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .drop-desc {
   color: var(--muted);
-  max-width: 54ch;
-  margin: 0 auto 24px;
+  max-width: 56ch;
+  margin: 0 auto 20px;
 }
 
-.feature-pills {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 22px;
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
 }
 
-.feature-pill {
+.guide-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.guide-step-title {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.guide-step-text {
   font-size: var(--text-sm);
   color: var(--muted);
-  background: var(--surface-tint);
-  border: 1px solid var(--border);
-  padding: 4px 12px;
-  border-radius: 999px;
+  line-height: 1.6;
 }
 
 /* ==================== WORKSPACE SPLIT PANES ==================== */
@@ -853,6 +870,66 @@ dialog::backdrop {
   gap: 8px;
 }
 
+/* Comprehensive Help Modal */
+dialog.help-dialog[open] {
+  width: min(740px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.help-body {
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.help-sec {
+  background: var(--surface-tint);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 15px;
+}
+
+.help-sec-title {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.help-list {
+  padding-left: 18px;
+  font-size: var(--text-sm);
+  color: var(--ink);
+  line-height: 1.68;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kbd-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 7px 16px;
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+kbd {
+  display: inline-block;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  font-family: inherit;
+  margin-right: 4px;
+}
+
 /* ==================== PERSISTENT TOAST NOTIFICATIONS ==================== */
 .toast-region {
   position: fixed;
@@ -925,5 +1002,11 @@ dialog::backdrop {
   .sent-cell + .sent-cell {
     border-left: none;
     border-top: 1px solid var(--border);
+  }
+  .guide-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .kbd-grid {
+    grid-template-columns: 1fr;
   }
 }

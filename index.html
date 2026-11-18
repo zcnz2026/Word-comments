@@ -33,6 +33,7 @@
 
       <button type="button" class="btn" id="undoBtn" onclick="window.undo()" disabled title="撤销 (Ctrl+Z)">撤销</button>
       <button type="button" class="btn" id="redoBtn" onclick="window.redo()" disabled title="重做 (Ctrl+Y)">重做</button>
+      <button type="button" class="btn" onclick="window.openHelpModal()" title="查看详细操作说明与快捷键">❓ 帮助</button>
       <button type="button" class="btn" onclick="window.triggerOpenFile()">导入 Word</button>
       <button type="button" class="btn btn-primary" id="exportBtn" onclick="window.exportCurrentDocx()" disabled>导出 Word</button>
     </div>
@@ -60,20 +61,37 @@
     </div>
   </div>
 
-  <!-- Opening Dropzone Stage -->
+  <!-- Opening Dropzone & Onboarding Guide Stage -->
   <section class="drop-stage" id="dropStage">
-    <div class="drop-card" id="dropCard">
-      <h1 class="drop-headline">拖入任意 Word (.docx) 开始审阅批注</h1>
-      <p class="drop-desc">支持双栏译稿、AI 高密批注稿及译者多轮返稿。所有解析与导出均在浏览器本地内存完成，文稿内容绝不上传任何服务器。</p>
-      <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap">
-        <button type="button" class="btn btn-primary" style="padding:10px 22px;font-size:var(--text-base)" onclick="event.stopPropagation();window.triggerOpenFile()">选择本地 .docx 文件</button>
-        <button type="button" class="btn" style="padding:10px 18px;font-size:var(--text-base)" onclick="event.stopPropagation();window.loadBuiltInDemo()">加载示例文稿体验</button>
+    <div class="onboarding-wrap">
+      <div class="drop-card" id="dropCard">
+        <h1 class="drop-headline">拖入任意 Word (.docx) 开始审阅批注</h1>
+        <p class="drop-desc">支持双栏译稿、AI 高密批注稿及译者多轮返稿。所有解析与导出均在浏览器本地内存完成，文稿内容绝不上传任何服务器。</p>
+        <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary" style="padding:10px 22px;font-size:var(--text-base)" onclick="event.stopPropagation();window.triggerOpenFile()">选择本地 .docx 文件</button>
+          <button type="button" class="btn" style="padding:10px 18px;font-size:var(--text-base)" onclick="event.stopPropagation();window.loadBuiltInDemo()">加载示例文稿体验</button>
+          <button type="button" class="btn" style="padding:10px 18px;font-size:var(--text-base)" onclick="event.stopPropagation();window.openHelpModal()">❓ 查看详细使用说明</button>
+        </div>
       </div>
-      <div class="feature-pills">
-        <span class="feature-pill">点字即放大对应批注</span>
-        <span class="feature-pill">原生兼容 Word 多轮嵌套回复</span>
-        <span class="feature-pill">删批注自动清除关联青绿底色</span>
-        <span class="feature-pill">修订模式 / 直接改字随时切换</span>
+
+      <!-- Quick-Start Visual Guide on Landing Screen -->
+      <div class="guide-grid" aria-label="快速上手说明">
+        <div class="guide-box">
+          <div class="guide-step-title">1. 点击联动定位</div>
+          <p class="guide-step-text">点左边<strong>任意字句或蓝色高亮词</strong>，右边对应批注会自动滚到同一视线高度并放大；开启「左滚右随」时滚轮读稿右侧也会自动跟进。</p>
+        </div>
+        <div class="guide-box">
+          <div class="guide-step-title">2. 划词加批注与涂色</div>
+          <p class="guide-step-text">鼠标<strong>划选任意中英文文字</strong>即弹出工具条：可「➕ 加批注」、涂青／绿／黄底色，或将英文词「🔗 绑到当前批注」。</p>
+        </div>
+        <div class="guide-box">
+          <div class="guide-step-title">3. 多轮回复与删批注清色</div>
+          <p class="guide-step-text">顶部填好<strong>署名</strong>，在卡片底部输入按回车即可追加多轮回复；删除批注时默认<strong>一键自动清除中英文关联底色</strong>。</p>
+        </div>
+        <div class="guide-box">
+          <div class="guide-step-title">4. 改英文与导出 Word</div>
+          <p class="guide-step-text">顶部可切换<strong>「修订模式」</strong>（保留红绿修订痕迹，点已有修订可接受／拒绝）或<strong>「直接改字」</strong>，审完点右上角导出标准 `.docx`。</p>
+        </div>
       </div>
     </div>
   </section>
@@ -141,6 +159,69 @@
       <button type="button" class="btn" autofocus onclick="this.closest('dialog').close()">暂不处理</button>
       <button type="button" class="btn btn-danger" onclick="window.handleRevDecision(false)">✕ 拒绝修订（恢复原词）</button>
       <button type="button" class="btn btn-primary" onclick="window.handleRevDecision(true)">✓ 接受修订（采纳新词）</button>
+    </div>
+  </dialog>
+
+  <!-- Modal 4: Comprehensive Usage Help Guide -->
+  <dialog id="helpModal" class="help-dialog" closedby="any" aria-labelledby="helpModalTitle">
+    <div class="dlg-head">
+      <h2 class="dlg-title" id="helpModalTitle">Word 译文批注工作台 · 使用说明</h2>
+      <button type="button" class="tiny-btn" autofocus onclick="this.closest('dialog').close()">关闭 (Esc)</button>
+    </div>
+
+    <div class="help-body">
+      <section class="help-sec">
+        <h3 class="help-sec-title">一、导入与导出 Word（隐私安全说明）</h3>
+        <ul class="help-list">
+          <li><strong>导入文稿</strong>：直接将 `.docx` 文件拖入网页窗口，或点击右上角「导入 Word」。原文档的表格、字体、已有批注、多轮回复和修订痕迹均完整保留。</li>
+          <li><strong>导出文稿</strong>：处理完毕点击右上角<strong>「导出 Word」</strong>，即可下载 `原文件名_已审阅.docx`，在 Microsoft Word 或 WPS 中打开完全原生兼容。</li>
+          <li><strong>数据保密</strong>：本工具为纯浏览器本地应用，解析与打包均在你自己电脑的内存中进行，<strong>文稿内容一个字都不会上传到任何服务器</strong>。</li>
+        </ul>
+      </section>
+
+      <section class="help-sec">
+        <h3 class="help-sec-title">二、阅读与双向联动定位</h3>
+        <ul class="help-list">
+          <li><strong>左点右随（核心操作）</strong>：点击左侧正文中的<strong>蓝色高亮词、右上角数字角标，或句子里的任意普通文字</strong>，右侧对应的批注卡片会自动平滑滚动到与你鼠标同一水平视线高度，并放大高亮显示。</li>
+          <li><strong>右点左随</strong>：点击右侧任意批注卡片，左侧正文也会自动滚到对应句子，并将该条批注绑定的中文锚点（青框）、对应英文词（青框）及前后参照词（绿框）同步加粗框突出。</li>
+          <li><strong>左滚右随与视图切换</strong>：二级栏可开启／关闭「🔗 左滚右随」；顶部可在<strong>「左右分栏」</strong>与<strong>「逐句内嵌」</strong>（批注直接显示在每句下方）两种阅读布局间随时切换。</li>
+        </ul>
+      </section>
+
+      <section class="help-sec">
+        <h3 class="help-sec-title">三、批注「增、删、改、多轮回复」与颜色画笔</h3>
+        <ul class="help-list">
+          <li><strong>新增批注</strong>：用鼠标在左侧中文（或英文）里<strong>拖选一段文字</strong> → 在弹出的深色悬浮工具条点击<strong>「➕ 加批注」</strong>输入内容即可（锚点自动标青色）。</li>
+          <li><strong>绑定对应英文／参照词</strong>：先选中某条批注卡片使其处于激活状态，再用鼠标在英文列划选对应词，点悬浮工具条的<strong>「🔗 绑到当前批注(青)」</strong>或<strong>「🌿 绑参照词(绿)」</strong>即可关联到一起。</li>
+          <li><strong>自由涂／清底色</strong>：划选任意中英文文字，可直接点工具条上的<strong>青、绿、黄</strong>色块涂高亮，或点<strong>「清除底色」</strong>擦除高亮。</li>
+          <li><strong>多轮嵌套回复</strong>：先在顶部<strong>「署名」</strong>框填好你的名字（如 `LR`、`审校`、`译者`），在任意卡片底部的输入框打字按 `Enter`（或点「回复」）即可挂入多轮回复，导出 Word 后即为标准嵌套回复气泡。</li>
+          <li><strong>删除批注自动清底色</strong>：点击卡片右上角「删除」，默认勾选<strong>“同时自动清除该批注绑定的中文与英文高亮底色”</strong>，省去在 Word 里手动一处处去底色的麻烦。</li>
+        </ul>
+      </section>
+
+      <section class="help-sec">
+        <h3 class="help-sec-title">四、修改文字的两种模式（顶部一键切换）</h3>
+        <ul class="help-list">
+          <li><strong>修订模式（默认推荐）</strong>：顶部选中「修订模式」时，划选英文词点<strong>「✏️ 修订改词」</strong>，修改结果会以<span class="rev-del">红字删除线</span>＋<span class="rev-ins">绿字下划线</span>显示，导出 Word 即为标准修订模式（Track Changes）；直接点击文中已有的红绿修订词，可弹窗选择<strong>「✓ 接受修订」</strong>或<strong>「✕ 拒绝修订」</strong>。</li>
+          <li><strong>直接改字模式</strong>：顶部切换到「直接改字」后，划选文字点<strong>「📝 直接改字」</strong>即可无痕修改定稿文字，不留修订红线。</li>
+        </ul>
+      </section>
+
+      <section class="help-sec">
+        <h3 class="help-sec-title">五、效率快捷键</h3>
+        <div class="kbd-grid">
+          <div><kbd>J</kbd> 或 <kbd>↓</kbd> 下一条批注</div>
+          <div><kbd>K</kbd> 或 <kbd>↑</kbd> 上一条批注</div>
+          <div><kbd>Ctrl + Z</kbd> 撤销操作（支持 35 步）</div>
+          <div><kbd>Ctrl + Y</kbd> 重做操作</div>
+          <div><kbd>Enter</kbd> 发送卡片内回复</div>
+          <div><kbd>Ctrl + Enter</kbd> 弹窗内快速确认保存</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="dlg-actions" style="margin-top:14px">
+      <button type="button" class="btn btn-primary" onclick="this.closest('dialog').close()">我知道了</button>
     </div>
   </dialog>
 

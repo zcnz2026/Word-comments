@@ -1272,6 +1272,11 @@
     document.getElementById('docxFileInput').click();
   };
 
+  window.openHelpModal = function () {
+    const dlg = document.getElementById('helpModal');
+    if (dlg) dlg.showModal();
+  };
+
   window.loadBuiltInDemo = async function () {
     // Construct a clean minimal valid .docx archive in memory with 2 rows & 12 comments for instant interactive testing
     const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
