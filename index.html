@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Word 译文批注审阅工作台</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+  <!-- Top Single-Line Masthead -->
+  <header class="masthead">
+    <div class="brand-area">
+      <div class="brand-mark">Word 批注工作台</div>
+      <div class="doc-badge" id="docBadge">未加载文档（本地纯浏览器解析，文稿零上传）</div>
+    </div>
+
+    <div class="masthead-controls">
+      <label class="author-field" title="新增批注、多轮回复及英文修订的审校署名">
+        <span>署名</span>
+        <input type="text" id="reviewerInput" class="author-input" value="审校" aria-label="审校署名">
+      </label>
+
+      <div class="seg-switch" title="切换中英文改字方式：修订留痕 或 直接无痕改字">
+        <button type="button" class="seg-btn active" id="btnEditTrack" onclick="window.setEditMode('track')">修订模式</button>
+        <button type="button" class="seg-btn" id="btnEditDirect" onclick="window.setEditMode('direct')">直接改字</button>
+      </div>
+
+      <div class="seg-switch" title="切换批注阅读布局">
+        <button type="button" class="seg-btn active" id="btnViewSplit" onclick="window.setViewMode('split')">左右分栏</button>
+        <button type="button" class="seg-btn" id="btnViewInline" onclick="window.setViewMode('inline')">逐句内嵌</button>
+      </div>
+
+      <button type="button" class="btn" id="undoBtn" onclick="window.undo()" disabled title="撤销 (Ctrl+Z)">撤销</button>
+      <button type="button" class="btn" id="redoBtn" onclick="window.redo()" disabled title="重做 (Ctrl+Y)">重做</button>
+      <button type="button" class="btn" onclick="window.triggerOpenFile()">导入 Word</button>
+      <button type="button" class="btn btn-primary" id="exportBtn" onclick="window.exportCurrentDocx()" disabled>导出 Word</button>
+    </div>
+    <input type="file" id="docxFileInput" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+  </header>
+
+  <!-- Filter & Search Bar (Shown once a document is loaded) -->
+  <div class="subbar" id="subBar" hidden>
+    <div class="filter-row">
+      <button type="button" class="filter-chip active" data-status-filter="ALL" onclick="window.setStatusFilter('ALL')">全部批注</button>
+      <button type="button" class="filter-chip" data-status-filter="OPEN" onclick="window.setStatusFilter('OPEN')">未解决</button>
+      <button type="button" class="filter-chip" data-status-filter="REPLIED" onclick="window.setStatusFilter('REPLIED')">含多轮回复</button>
+      <button type="button" class="filter-chip" data-status-filter="DONE" onclick="window.setStatusFilter('DONE')">已解决</button>
+
+      <select id="authorSelect" class="select-ctrl" aria-label="按署名筛选" onchange="window.onAuthorFilterChange(this.value)">
+        <option value="ALL">全部审校/回复人</option>
+      </select>
+      <span id="filterCountLabel" style="font-size:var(--text-sm);color:var(--muted);margin-left:6px"></span>
+    </div>
+
+    <div class="filter-row">
+      <span style="font-size:var(--text-sm);color:var(--muted)">划选文字可加批注/涂高亮/改词 · J/K 键上下跳条</span>
+      <input type="search" id="searchInput" class="search-ctrl" placeholder="搜索锚点、批注或回复…" aria-label="搜索批注" oninput="window.onSearchInput(this.value)">
+    </div>
+  </div>
+
+  <!-- Opening Dropzone Stage -->
+  <section class="drop-stage" id="dropStage">
+    <div class="drop-card" id="dropCard">
+      <h1 class="drop-headline">拖入任意 Word (.docx) 开始审阅批注</h1>
+      <p class="drop-desc">支持双栏译稿、AI 高密批注稿及译者多轮返稿。所有解析与导出均在浏览器本地内存完成，文稿内容绝不上传任何服务器。</p>
+      <button type="button" class="btn btn-primary" style="padding:10px 22px;font-size:var(--text-base)" onclick="event.stopPropagation();window.triggerOpenFile()">选择本地 .docx 文件</button>
+      <div class="feature-pills">
+        <span class="feature-pill">点字即放大对应批注</span>
+        <span class="feature-pill">原生兼容 Word 多轮嵌套回复</span>
+        <span class="feature-pill">删批注自动清除关联青绿底色</span>
+        <span class="feature-pill">修订模式 / 直接改字随时切换</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Bilingual Split Workspace -->
+  <main class="workspace" id="workspace" hidden>
+    <section class="doc-pane" id="docPane" aria-label="中英文对照正文"></section>
+    <aside class="comments-pane" id="commentsPane" aria-label="批注与多轮回复列表"></aside>
+  </main>
+
+  <!-- Floating Selection Action Bar -->
+  <div class="sel-toolbar" id="selToolbar" hidden>
+    <button type="button" class="sel-btn" onclick="window.openNewCommentModalFromSelection()">➕ 加批注</button>
+    <button type="button" class="sel-btn" id="selEditTextBtn" onclick="window.openEditTextModalFromSelection()">✏️ 修订改词</button>
+    <button type="button" class="sel-btn" id="selBindCyanBtn" onclick="window.bindSelectionToActiveThread('cyan')">🔗 绑到当前批注(青)</button>
+    <button type="button" class="sel-btn" id="selBindGreenBtn" onclick="window.bindSelectionToActiveThread('green')">🌿 绑参照词(绿)</button>
+    <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('cyan')"><span class="swatch-dot" style="background:#38bdf8"></span>青</button>
+    <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('green')"><span class="swatch-dot" style="background:#4ade80"></span>绿</button>
+    <button type="button" class="sel-btn" onclick="window.applySelectionHighlight('yellow')"><span class="swatch-dot" style="background:#facc15"></span>黄</button>
+    <button type="button" class="sel-btn" onclick="window.applySelectionHighlight(null)">清除底色</button>
+  </div>
+
+  <!-- Modal 1: Add / Edit Comment, Reply, or Text -->
+  <dialog id="editModal" closedby="any" aria-labelledby="editModalTitle">
+    <div class="dlg-head">
+      <h2 class="dlg-title" id="editModalTitle">编辑内容</h2>
+      <button type="button" class="tiny-btn" onclick="this.closest('dialog').close()">关闭</button>
+    </div>
+    <textarea id="editModalTextarea" class="dlg-textarea" placeholder="请输入内容（Ctrl+Enter 快速确认）…" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();window.confirmEditModal();}"></textarea>
+    <div class="dlg-actions">
+      <button type="button" class="btn" onclick="this.closest('dialog').close()">取消</button>
+      <button type="button" class="btn btn-primary" onclick="window.confirmEditModal()">确认保存</button>
+    </div>
+  </dialog>
+
+  <!-- Modal 2: Delete Comment Confirmation -->
+  <dialog id="deleteModal" closedby="any" aria-labelledby="deleteModalTitle">
+    <div class="dlg-head">
+      <h2 class="dlg-title" id="deleteModalTitle">确认删除该条批注？</h2>
+      <button type="button" class="tiny-btn" onclick="this.closest('dialog').close()">关闭</button>
+    </div>
+    <p style="color:var(--muted)">锚点词：【<strong id="delAnchorPreview" style="color:var(--ink)"></strong>】（包含该批注下的所有回复）</p>
+    <label class="dlg-check">
+      <input type="checkbox" id="delClearHlCheck" checked>
+      <span>同时自动清除该批注绑定的中文与英文高亮底色（省去手动去色）</span>
+    </label>
+    <div class="dlg-actions">
+      <button type="button" class="btn" autofocus onclick="this.closest('dialog').close()">取消保留</button>
+      <button type="button" class="btn btn-danger" onclick="window.confirmDeleteComment()">确认删除</button>
+    </div>
+  </dialog>
+
+  <!-- Modal 3: Accept / Reject Track Change -->
+  <dialog id="revModal" closedby="any" aria-labelledby="revModalTitle">
+    <div class="dlg-head">
+      <h2 class="dlg-title" id="revModalTitle">处理 Word 修订痕迹</h2>
+      <button type="button" class="tiny-btn" onclick="this.closest('dialog').close()">关闭</button>
+    </div>
+    <p style="font-size:var(--text-sm);color:var(--muted);margin-bottom:10px">修订人：<span id="revAuthorSpan"></span></p>
+    <div style="background:var(--surface-tint);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:16px">
+      <div>原词（删除）：<span class="rev-del" id="revDelPreview"></span></div>
+      <div style="margin-top:6px">新词（插入）：<span class="rev-ins" id="revInsPreview"></span></div>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" class="btn" autofocus onclick="this.closest('dialog').close()">暂不处理</button>
+      <button type="button" class="btn btn-danger" onclick="window.handleRevDecision(false)">✕ 拒绝修订（恢复原词）</button>
+      <button type="button" class="btn btn-primary" onclick="window.handleRevDecision(true)">✓ 接受修订（采纳新词）</button>
+    </div>
+  </dialog>
+
+  <!-- Screen reader live fallback & persistent manual-popover toast region -->
+  <p class="sr-only">屏幕阅读器操作通知</p>
+  <div id="srLiveRegion" class="sr-only" aria-live="polite"></div>
+  <div id="toastRegion" class="toast-region" role="region" aria-label="操作通知"></div>
+
+  <script src="./zip-codec.js"></script>
+  <script src="./docx-engine.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
