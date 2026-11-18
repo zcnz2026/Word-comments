@@ -866,7 +866,8 @@ dialog::backdrop {
 }
 
 .toast-item[popover] {
-  position: static;
+  position: fixed;
+  inset: auto 18px 18px auto;
   margin: 0;
   border: 1px solid var(--border-strong);
   border-left: 4px solid var(--accent);
