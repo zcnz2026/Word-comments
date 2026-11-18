@@ -458,6 +458,11 @@ body.view-inline .comments-pane {
   border-bottom: 2px solid #db2777;
 }
 
+.hl-red {
+  background: rgba(239, 68, 68, 0.24);
+  border-bottom: 2px solid #dc2626;
+}
+
 .hl-gray {
   background: #e2e8f0;
 }

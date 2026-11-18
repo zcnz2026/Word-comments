@@ -628,6 +628,7 @@
         else if (tok.hl === 'green') cls.push('hl-green');
         else if (tok.hl === 'yellow') cls.push('hl-yellow');
         else if (tok.hl === 'magenta') cls.push('hl-magenta');
+        else if (tok.hl === 'red') cls.push('hl-red');
         else if (tok.hl === 'lightGray' || tok.hl === 'darkGray') cls.push('hl-gray');
 
         if (tok.bold) cls.push('fmt-bold');
@@ -750,7 +751,9 @@
     // Render left document pane
     let docHtml = '';
     docState.rows.forEach((rObj, rIdx) => {
-      if (docState.rows.length > 1) {
+      if (rObj.sectionTitle) {
+        docHtml += `<h2 class="row-header">第 ${rIdx + 1} 段 · ${escHtml(rObj.sectionTitle)}</h2>`;
+      } else if (docState.rows.length > 1) {
         docHtml += `<h2 class="row-header">第 ${rIdx + 1} 段</h2>`;
       }
       const hasCol1 = !!rObj.cells[1];

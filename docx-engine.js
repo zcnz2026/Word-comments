@@ -539,24 +539,55 @@
     const rangeEnds = new Map();
     const refPoints = new Map();
 
-    // Detect table rows or fallback body paragraphs
+    // Detect ALL tables in document body (multi-table documents supported) or fallback body paragraphs
     const bodyEl = Array.from(docDom.documentElement.childNodes).find(n => localNameOf(n) === 'body');
-    const tblEl = bodyEl ? Array.from(bodyEl.childNodes).find(n => localNameOf(n) === 'tbl') : null;
+    const bodyKids = bodyEl ? Array.from(bodyEl.childNodes) : [];
+    const tblEls = bodyKids.filter(n => localNameOf(n) === 'tbl');
 
     const rows = [];
-    if (tblEl) {
-      const trEls = Array.from(tblEl.childNodes).filter(n => localNameOf(n) === 'tr');
-      trEls.forEach((trEl, rIdx) => {
-        const tcEls = Array.from(trEl.childNodes).filter(n => localNameOf(n) === 'tc');
-        const cells = tcEls.slice(0, 2).map((tcEl, cIdx) => {
-          const pEls = Array.from(tcEl.childNodes).filter(n => localNameOf(n) === 'p');
-          const paras = pEls.map((pEl, pIdx) =>
-            parseParagraphNode(pEl, rIdx, cIdx, pIdx, rangeStarts, rangeEnds, refPoints)
-          );
-          return { paras };
-        });
-        rows.push({ isTable: true, rowIdx: rIdx, cells });
-      });
+    if (tblEls.length > 0) {
+      let tblIdx = 0;
+      let pendingHeadingParts = [];
+      for (const node of bodyKids) {
+        const ln = localNameOf(node);
+        if (ln === 'p') {
+          let txt = '';
+          const walkT = (el) => {
+            for (const c of Array.from(el.childNodes)) {
+              const cln = localNameOf(c);
+              if (cln === 't') txt += c.textContent || '';
+              else if (c.nodeType === 1 && cln !== 'del') walkT(c);
+            }
+          };
+          walkT(node);
+          const trimmed = txt.trim();
+          if (trimmed) pendingHeadingParts.push(trimmed);
+        } else if (ln === 'tbl') {
+          const sectionTitle = pendingHeadingParts.join(' · ');
+          pendingHeadingParts = [];
+          const trEls = Array.from(node.childNodes).filter(n => localNameOf(n) === 'tr');
+          trEls.forEach((trEl, trIdx) => {
+            const rIdx = rows.length;
+            const tcEls = Array.from(trEl.childNodes).filter(n => localNameOf(n) === 'tc');
+            const cells = tcEls.slice(0, 2).map((tcEl, cIdx) => {
+              const pEls = Array.from(tcEl.childNodes).filter(n => localNameOf(n) === 'p');
+              const paras = pEls.map((pEl, pIdx) =>
+                parseParagraphNode(pEl, rIdx, cIdx, pIdx, rangeStarts, rangeEnds, refPoints)
+              );
+              return { paras };
+            });
+            rows.push({
+              isTable: true,
+              tblIdx,
+              trIdx,
+              rowIdx: rIdx,
+              sectionTitle: trIdx === 0 ? sectionTitle : '',
+              cells
+            });
+          });
+          tblIdx++;
+        }
+      }
     } else if (bodyEl) {
       const pEls = Array.from(bodyEl.childNodes).filter(n => localNameOf(n) === 'p');
       const paras = pEls.map((pEl, pIdx) =>
@@ -1186,13 +1217,15 @@
 
     const revIdCounter = { val: 9001 };
     const bodyEl = Array.from(docDom.documentElement.childNodes).find(n => localNameOf(n) === 'body');
-    const tblEl = bodyEl ? Array.from(bodyEl.childNodes).find(n => localNameOf(n) === 'tbl') : null;
+    const tblEls = bodyEl ? Array.from(bodyEl.childNodes).filter(n => localNameOf(n) === 'tbl') : [];
 
-    if (tblEl && docState.rows[0]?.isTable) {
-      const trEls = Array.from(tblEl.childNodes).filter(n => localNameOf(n) === 'tr');
-      trEls.forEach((trEl, rIdx) => {
-        const rModel = docState.rows[rIdx];
-        if (!rModel) return;
+    if (tblEls.length > 0 && docState.rows[0]?.isTable) {
+      const tblRowsCache = tblEls.map(tbl => Array.from(tbl.childNodes).filter(n => localNameOf(n) === 'tr'));
+      docState.rows.forEach((rModel, rIdx) => {
+        const tIdx = typeof rModel.tblIdx === 'number' ? rModel.tblIdx : 0;
+        const trIdx = typeof rModel.trIdx === 'number' ? rModel.trIdx : rIdx;
+        const trEl = tblRowsCache[tIdx]?.[trIdx];
+        if (!trEl) return;
         const tcEls = Array.from(trEl.childNodes).filter(n => localNameOf(n) === 'tc');
         tcEls.slice(0, 2).forEach((tcEl, cIdx) => {
           const cModel = rModel.cells[cIdx];
@@ -1334,7 +1367,10 @@
     return JSON.stringify({
       rows: docState.rows.map(r => ({
         isTable: r.isTable,
+        tblIdx: r.tblIdx,
+        trIdx: r.trIdx,
         rowIdx: r.rowIdx,
+        sectionTitle: r.sectionTitle || '',
         cells: r.cells.map(c => ({
           paras: c.paras.map(p => ({
             pPrXml: p.pPrXml,
