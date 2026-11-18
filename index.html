@@ -54,7 +54,8 @@
     </div>
 
     <div class="filter-row">
-      <span style="font-size:var(--text-sm);color:var(--muted)">划选文字可加批注/涂高亮/改词 · J/K 键上下跳条</span>
+      <button type="button" class="filter-chip active" id="scrollSyncBtn" onclick="window.toggleScrollSync()" title="开启后，在左侧滚动正文时右侧批注也会自动跟随">🔗 左滚右随：开</button>
+      <span style="font-size:var(--text-sm);color:var(--muted)">点左侧任意词句右侧批注即对齐 · 划选文字可加批注/改词</span>
       <input type="search" id="searchInput" class="search-ctrl" placeholder="搜索锚点、批注或回复…" aria-label="搜索批注" oninput="window.onSearchInput(this.value)">
     </div>
   </div>
@@ -64,7 +65,10 @@
     <div class="drop-card" id="dropCard">
       <h1 class="drop-headline">拖入任意 Word (.docx) 开始审阅批注</h1>
       <p class="drop-desc">支持双栏译稿、AI 高密批注稿及译者多轮返稿。所有解析与导出均在浏览器本地内存完成，文稿内容绝不上传任何服务器。</p>
-      <button type="button" class="btn btn-primary" style="padding:10px 22px;font-size:var(--text-base)" onclick="event.stopPropagation();window.triggerOpenFile()">选择本地 .docx 文件</button>
+      <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap">
+        <button type="button" class="btn btn-primary" style="padding:10px 22px;font-size:var(--text-base)" onclick="event.stopPropagation();window.triggerOpenFile()">选择本地 .docx 文件</button>
+        <button type="button" class="btn" style="padding:10px 18px;font-size:var(--text-base)" onclick="event.stopPropagation();window.loadBuiltInDemo()">加载示例文稿体验</button>
+      </div>
       <div class="feature-pills">
         <span class="feature-pill">点字即放大对应批注</span>
         <span class="feature-pill">原生兼容 Word 多轮嵌套回复</span>

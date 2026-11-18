@@ -11,6 +11,7 @@
   const ui = {
     viewMode: localStorage.getItem('agy_view_mode') || 'split',     // 'split' | 'inline'
     editMode: localStorage.getItem('agy_edit_mode') || 'track',     // 'track' | 'direct'
+    scrollSync: localStorage.getItem('agy_scroll_sync') !== '0',    // default ON
     reviewer: localStorage.getItem('agy_reviewer') || '审校',
     statusFilter: 'ALL',   // 'ALL' | 'OPEN' | 'DONE' | 'REPLIED'
     authorFilter: 'ALL',
@@ -19,6 +20,45 @@
     currentSelection: null, // { row, col, pIdx, start, end, text, rect }
     pendingModalAction: null
   };
+
+  let pointerDownInfo = null;
+  let pointerInDocPane = false;
+  let suppressDocScrollUntil = 0;
+  let scrollSyncTimer = null;
+  let activeScrollAnim = new WeakMap();
+
+  function smoothScrollElementTo(el, targetTop, durationMs) {
+    if (!el) return;
+    const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+    const clampedTarget = Math.max(0, Math.min(maxScroll, targetTop));
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.scrollTop = clampedTarget;
+      return;
+    }
+    const prevAnim = activeScrollAnim.get(el);
+    if (prevAnim) cancelAnimationFrame(prevAnim);
+
+    const startTop = el.scrollTop;
+    const diff = clampedTarget - startTop;
+    if (Math.abs(diff) < 2) {
+      el.scrollTop = clampedTarget;
+      return;
+    }
+    const startTime = performance.now();
+    const dur = durationMs || 260;
+
+    function step(now) {
+      const t = Math.min(1, (now - startTime) / dur);
+      const ease = 1 - Math.pow(1 - t, 3); // cubic ease-out
+      el.scrollTop = startTop + diff * ease;
+      if (t < 1) {
+        activeScrollAnim.set(el, requestAnimationFrame(step));
+      } else {
+        activeScrollAnim.delete(el);
+      }
+    }
+    activeScrollAnim.set(el, requestAnimationFrame(step));
+  }
 
   /* ==================== INIT & DIALOG FALLBACKS ==================== */
   function init() {
@@ -59,8 +99,52 @@
       if (f) await openDocxFile(f);
     });
 
-    // Selection listener inside docPane
-    document.addEventListener('mouseup', () => setTimeout(checkTextSelection, 15));
+    // Selection & Universal Click-to-Follow inside docPane
+    const docPaneEl = document.getElementById('docPane');
+    docPaneEl.addEventListener('pointerenter', () => { pointerInDocPane = true; });
+    docPaneEl.addEventListener('pointerleave', () => { pointerInDocPane = false; });
+
+    docPaneEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      pointerDownInfo = { x: e.clientX, y: e.clientY, target: e.target };
+    });
+
+    docPaneEl.addEventListener('pointerup', (e) => {
+      if (e.button !== 0 || !pointerDownInfo || !docState) return;
+      const dist = Math.hypot(e.clientX - pointerDownInfo.x, e.clientY - pointerDownInfo.y);
+      pointerDownInfo = null;
+
+      if (dist > 6) {
+        setTimeout(checkTextSelection, 15);
+        return;
+      }
+      // Genuine click on left content (ignore inline cards when in inline mode, and ignore rev-chip)
+      if (e.target.closest('.inline-thread-tray') || e.target.closest('.rev-chip')) return;
+
+      // Clear any accidental 1-char micro-selection from tiny pointer jitter
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().length <= 2) {
+        sel.removeAllRanges();
+      } else if (sel && !sel.isCollapsed && sel.toString().length > 2) {
+        setTimeout(checkTextSelection, 15);
+        return;
+      }
+      document.getElementById('selToolbar').hidden = true;
+
+      const resolvedId = resolveClickedThreadInDocPane(e.target);
+      if (resolvedId) {
+        focusThread(resolvedId, 'text', e.clientY);
+      }
+    });
+
+    // Smooth left-pane scroll auto-follow
+    docPaneEl.addEventListener('scroll', () => {
+      if (!ui.scrollSync || ui.viewMode !== 'split' || !docState || !pointerInDocPane) return;
+      if (performance.now() < suppressDocScrollUntil) return;
+      if (scrollSyncTimer) clearTimeout(scrollSyncTimer);
+      scrollSyncTimer = setTimeout(syncRightCommentsToLeftScroll, 45);
+    }, { passive: true });
+
     document.addEventListener('keyup', (e) => {
       if (e.shiftKey) setTimeout(checkTextSelection, 15);
     });
@@ -267,7 +351,19 @@
     document.getElementById('btnViewInline').classList.toggle('active', ui.viewMode === 'inline');
     document.getElementById('btnEditTrack').classList.toggle('active', ui.editMode === 'track');
     document.getElementById('btnEditDirect').classList.toggle('active', ui.editMode === 'direct');
+    const syncBtn = document.getElementById('scrollSyncBtn');
+    if (syncBtn) {
+      syncBtn.classList.toggle('active', ui.scrollSync);
+      syncBtn.textContent = ui.scrollSync ? '🔗 左滚右随：开' : '🔗 左滚右随：关';
+    }
   }
+
+  window.toggleScrollSync = function () {
+    ui.scrollSync = !ui.scrollSync;
+    localStorage.setItem('agy_scroll_sync', ui.scrollSync ? '1' : '0');
+    syncModeButtons();
+    notifyToast(ui.scrollSync ? '已开启左侧滚动右侧批注自动跟随' : '已关闭左侧滚屏跟随（点击文字仍自动对齐）');
+  };
 
   window.setViewMode = function (m) {
     ui.viewMode = m;
@@ -496,7 +592,7 @@
         if (zeroThreads.length) {
           htmlOut += zeroThreads.map(th => {
             const ord = threadOrderMap.get(th.id) || '?';
-            return `<sup class="cmt-pin" onclick="window.onPinOrSpanClick(event, '${th.id}')">${ord}</sup>`;
+            return `<sup class="cmt-pin" data-thread-id="${th.id}">${ord}</sup>`;
           }).join('');
         }
       }
@@ -525,9 +621,7 @@
           cls.push(focusHit.kind === 'green' ? 'hl-focus-green' : 'hl-focus-cyan');
         }
 
-        const clickAttr = linkedThreadId
-          ? `onclick="window.onPinOrSpanClick(event, '${linkedThreadId}')"`
-          : '';
+        const thAttr = linkedThreadId ? `data-thread-id="${linkedThreadId}"` : '';
 
         if (tok.kind === 'rev') {
           htmlOut += `<span class="${cls.join(' ')} rev-chip" data-row="${rowIdx}" data-col="${colIdx}" data-p="${pIdx}" data-start="${segA}" data-end="${segB}" onclick="window.onRevTokenClick(event, ${rowIdx}, ${colIdx}, ${pIdx}, '${tok.id}')" title="修订人：${escHtml(tok.author)}（点击可接受/拒绝此修订）">`;
@@ -536,7 +630,7 @@
           htmlOut += `</span>`;
         } else {
           const subStr = tok.text.slice(segA - tokCursor, segB - tokCursor);
-          htmlOut += `<span class="${cls.join(' ')}" data-row="${rowIdx}" data-col="${colIdx}" data-p="${pIdx}" data-start="${segA}" data-end="${segB}" ${clickAttr}>${escHtml(subStr)}</span>`;
+          htmlOut += `<span class="${cls.join(' ')}" data-row="${rowIdx}" data-col="${colIdx}" data-p="${pIdx}" data-start="${segA}" data-end="${segB}" ${thAttr}>${escHtml(subStr)}</span>`;
         }
 
         // Emit pins whose anchor.end === segB (excluding zero-length already emitted)
@@ -548,7 +642,7 @@
               const actCls = (activeThread && activeThread.id === th.id) ? 'pin-active' : '';
               const doneCls = th.done ? 'pin-done' : '';
               const repBadge = th.replies.length ? `·${th.replies.length + 1}` : '';
-              return `<sup class="cmt-pin ${actCls} ${doneCls}" onclick="window.onPinOrSpanClick(event, '${th.id}')" title="点击定位并放大第 #${ord} 号批注">${ord}${repBadge}</sup>`;
+              return `<sup class="cmt-pin ${actCls} ${doneCls}" data-thread-id="${th.id}" title="点击定位并放大第 #${ord} 号批注">${ord}${repBadge}</sup>`;
             }).join('');
           }
         }
@@ -565,7 +659,8 @@
     return iso.replace('T', ' ').replace(/:\d{2}Z$/, '').slice(0, 16);
   }
 
-  function buildThreadCardHtml(th, ordNum) {
+  function buildThreadCardHtml(th, ordNum, paneKind) {
+    const pk = paneKind || ui.viewMode;
     const isAct = ui.activeThreadId === th.id;
     const rObj = docState.rows[th.anchor.row];
     const bIdx = locateSentenceBlockForThread(th);
@@ -590,7 +685,7 @@
       : '';
 
     return `
-      <article class="thread-card ${isAct ? 'active' : ''} ${th.done ? 'thread-done' : ''}" id="card-${ui.viewMode}-${th.id}" onclick="window.focusThread('${th.id}', 'card')">
+      <article class="thread-card ${isAct ? 'active' : ''} ${th.done ? 'thread-done' : ''}" id="card-${pk}-${th.id}" onclick="window.focusThread('${th.id}', 'card')">
         <div class="card-top">
           <div class="card-badges">
             <span class="num-pill">#${ordNum}</span>
@@ -610,7 +705,7 @@
         <div class="cmt-text">${escHtml(th.text)}</div>
         ${repliesHtml}
         <div class="reply-composer" onclick="event.stopPropagation()">
-          <input type="text" class="reply-input" id="reply-in-${ui.viewMode}-${th.id}" placeholder="添加多轮回复（按 Enter 发送）…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.submitReply('${th.id}');}">
+          <input type="text" class="reply-input" id="reply-in-${pk}-${th.id}" placeholder="添加多轮回复（按 Enter 发送）…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.submitReply('${th.id}');}">
           <button type="button" class="tiny-btn" onclick="window.submitReply('${th.id}')">回复</button>
         </div>
       </article>
@@ -649,13 +744,13 @@
           ? renderCellSliceHtml(rIdx, 1, blk.enSpan[0], blk.enSpan[1], activeThread, threadOrderMap)
           : '';
 
-        const blkThreads = visibleThreads.filter(
-          th => th.anchor.row === rIdx && locateSentenceBlockForThread(th) === bIdx
-        );
-        const trayHtml = blkThreads.map(th => buildThreadCardHtml(th, threadOrderMap.get(th.id))).join('');
+        const blkThreads = ui.viewMode === 'inline'
+          ? visibleThreads.filter(th => th.anchor.row === rIdx && locateSentenceBlockForThread(th) === bIdx)
+          : [];
+        const trayHtml = blkThreads.map(th => buildThreadCardHtml(th, threadOrderMap.get(th.id), 'inline')).join('');
 
         docHtml += `
-          <div class="sent-row ${isFocused ? 'active-sent' : ''}" id="sblk-${rIdx}-${bIdx}">
+          <div class="sent-row ${isFocused ? 'active-sent' : ''}" id="sblk-${rIdx}-${bIdx}" data-row="${rIdx}" data-bidx="${bIdx}">
             <div class="sent-grid ${hasCol1 ? '' : 'single-col'}">
               <div class="sent-cell"><span class="sent-idx">${escHtml(blk.label)}</span>${leftHtml}</div>
               ${hasCol1 ? `<div class="sent-cell">${rightHtml}</div>` : ''}
@@ -665,42 +760,182 @@
         `;
       });
     });
-    document.getElementById('docPane').innerHTML = docHtml;
 
-    // Render right comments pane
+    const dPane = document.getElementById('docPane');
     const cPane = document.getElementById('commentsPane');
+    const prevDocScroll = dPane.scrollTop;
+    const prevCmtScroll = cPane.scrollTop;
+
+    dPane.innerHTML = docHtml;
+    dPane.scrollTop = prevDocScroll;
+
+    // Render right comments pane without losing scroll offset
     cPane.classList.toggle('has-active', !!activeThread);
     if (ui.viewMode === 'split') {
       cPane.innerHTML = visibleThreads.length
-        ? visibleThreads.map(th => buildThreadCardHtml(th, threadOrderMap.get(th.id))).join('')
+        ? visibleThreads.map(th => buildThreadCardHtml(th, threadOrderMap.get(th.id), 'split')).join('')
         : `<div style="padding:36px 20px;text-align:center;color:var(--muted)">当前筛选条件下暂无批注（可在左侧划选文字新增批注）</div>`;
+      cPane.scrollTop = prevCmtScroll;
     }
   }
 
-  /* ==================== BI-DIRECTIONAL STRONG ZOOM FOCUS ==================== */
-  window.onPinOrSpanClick = function (ev, threadId) {
-    // Do not hijack mouse drag text selection!
-    const sel = window.getSelection();
-    if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
-    ev.stopPropagation();
-    focusThread(threadId, 'text');
-  };
+  /* ==================== UNIVERSAL LEFT-CLICK & SCROLL ALIGNMENT ==================== */
+  function spanDist(pos, a, b) {
+    if (pos >= a && pos <= b) return 0;
+    return pos < a ? (a - pos) : (pos - b);
+  }
 
-  window.focusThread = function (threadId, source) {
+  function resolveClickedThreadInDocPane(targetEl) {
+    if (!docState) return null;
+    const vis = getVisibleThreads();
+    if (!vis.length) return null;
+
+    // 1. Direct hit on a pin, anchor highlight, or linked English highlight
+    const directEl = targetEl.closest && targetEl.closest('[data-thread-id]');
+    if (directEl && directEl.dataset.threadId) {
+      const id = directEl.dataset.threadId;
+      if (vis.some(t => t.id === id)) return id;
+    }
+
+    // 2. Click on ANY plain Chinese or English text inside a sentence block -> pick nearest comment!
+    const segEl = targetEl.closest && targetEl.closest('.doc-seg');
+    const sentEl = targetEl.closest && targetEl.closest('.sent-row');
+    if (!sentEl) return null;
+
+    const rIdx = Number(sentEl.dataset.row);
+    const bIdx = Number(sentEl.dataset.bidx);
+    const inBlock = vis.filter(th => th.anchor.row === rIdx && locateSentenceBlockForThread(th) === bIdx);
+
+    if (inBlock.length === 1) return inBlock[0].id;
+
+    if (inBlock.length > 1 && segEl) {
+      const col = Number(segEl.dataset.col);
+      const pIdx = Number(segEl.dataset.p);
+      const midOff = (Number(segEl.dataset.start) + Number(segEl.dataset.end)) / 2;
+
+      let bestTh = inBlock[0];
+      let bestDist = Infinity;
+      for (const th of inBlock) {
+        let d = Infinity;
+        if (col === th.anchor.col && pIdx === th.anchor.pIdx) {
+          d = spanDist(midOff, th.anchor.start, th.anchor.end);
+        } else {
+          for (const lk of th.linkedSpans) {
+            if (lk.row === rIdx && lk.col === col && lk.pIdx === pIdx) {
+              d = Math.min(d, spanDist(midOff, lk.start, lk.end));
+            }
+          }
+        }
+        if (d < bestDist) {
+          bestDist = d;
+          bestTh = th;
+        }
+      }
+      return bestTh.id;
+    }
+
+    if (inBlock.length > 0) return inBlock[0].id;
+
+    // 3. Fallback when clicked sentence itself has 0 comments: pick nearest comment by (row, blockIdx)
+    let nearest = vis[0];
+    let minGap = Infinity;
+    for (const th of vis) {
+      const thBlk = locateSentenceBlockForThread(th);
+      const gap = Math.abs((th.anchor.row - rIdx) * 100 + (thBlk - bIdx));
+      if (gap < minGap) {
+        minGap = gap;
+        nearest = th;
+      }
+    }
+    return nearest.id;
+  }
+
+  function alignCardInRightPane(threadId, targetClientY, durationMs) {
+    const cPane = document.getElementById('commentsPane');
+    const cardEl = document.getElementById(`card-split-${threadId}`);
+    if (!cPane || !cardEl) return;
+
+    const cRect = cPane.getBoundingClientRect();
+    const cardRect = cardEl.getBoundingClientRect();
+
+    // Determine desired vertical position of card relative to commentsPane top
+    let desiredVisualTop = 100;
+    if (typeof targetClientY === 'number') {
+      desiredVisualTop = targetClientY - cRect.top - 26;
+    } else {
+      const focusSpan = document.querySelector('#docPane .hl-focus-cyan');
+      if (focusSpan) {
+        desiredVisualTop = focusSpan.getBoundingClientRect().top - cRect.top - 18;
+      }
+    }
+    desiredVisualTop = Math.max(18, Math.min(Math.max(60, cPane.clientHeight - 180), desiredVisualTop));
+
+    const targetScrollTop = cPane.scrollTop + (cardRect.top - cRect.top) - desiredVisualTop;
+    smoothScrollElementTo(cPane, targetScrollTop, durationMs || 260);
+  }
+
+  function syncRightCommentsToLeftScroll() {
+    if (!docState || ui.viewMode !== 'split') return;
+    const vis = getVisibleThreads();
+    if (!vis.length) return;
+    const dPane = document.getElementById('docPane');
+    const dRect = dPane.getBoundingClientRect();
+    const probeY = dRect.top + Math.min(140, dPane.clientHeight * 0.26);
+
+    const rowsEls = dPane.querySelectorAll('.sent-row');
+    let hitRow = null;
+    for (const el of rowsEls) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom >= probeY) {
+        hitRow = el;
+        break;
+      }
+    }
+    if (!hitRow) return;
+
+    const rIdx = Number(hitRow.dataset.row);
+    const bIdx = Number(hitRow.dataset.bidx);
+    const match = vis.find(th => th.anchor.row === rIdx && locateSentenceBlockForThread(th) === bIdx);
+    if (!match || match.id === ui.activeThreadId) return;
+
+    ui.activeThreadId = match.id;
+    renderWorkspace();
+    alignCardInRightPane(match.id, hitRow.getBoundingClientRect().top + 20, 210);
+  }
+
+  window.focusThread = function (threadId, source, clickedClientY) {
     ui.activeThreadId = threadId;
     renderWorkspace();
     const th = docState.threads.find(t => t.id === threadId);
     if (!th) return;
 
     if (ui.viewMode === 'split') {
-      if (source === 'text' || source === 'keyboard') {
+      if (source === 'text') {
+        suppressDocScrollUntil = performance.now() + 550;
+        alignCardInRightPane(threadId, clickedClientY, 260);
+      } else if (source === 'card') {
+        suppressDocScrollUntil = performance.now() + 450;
+        const dPane = document.getElementById('docPane');
         const cardEl = document.getElementById(`card-split-${threadId}`);
-        if (cardEl) cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-      if (source === 'card' || source === 'keyboard') {
-        const bIdx = locateSentenceBlockForThread(th);
-        const blkEl = document.getElementById(`sblk-${th.anchor.row}-${bIdx}`);
-        if (blkEl) blkEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const focusSpan = dPane.querySelector('.hl-focus-cyan') || document.getElementById(`sblk-${th.anchor.row}-${locateSentenceBlockForThread(th)}`);
+        if (dPane && focusSpan) {
+          const dRect = dPane.getBoundingClientRect();
+          const fRect = focusSpan.getBoundingClientRect();
+          const cardVisualY = cardEl ? Math.max(40, Math.min(dPane.clientHeight - 150, cardEl.getBoundingClientRect().top - dRect.top)) : 120;
+          const targetDocTop = dPane.scrollTop + (fRect.top - dRect.top) - cardVisualY;
+          smoothScrollElementTo(dPane, targetDocTop, 260);
+        }
+      } else if (source === 'keyboard') {
+        suppressDocScrollUntil = performance.now() + 450;
+        const dPane = document.getElementById('docPane');
+        const focusSpan = dPane.querySelector('.hl-focus-cyan') || document.getElementById(`sblk-${th.anchor.row}-${locateSentenceBlockForThread(th)}`);
+        if (dPane && focusSpan) {
+          const dRect = dPane.getBoundingClientRect();
+          const fRect = focusSpan.getBoundingClientRect();
+          const targetDocTop = dPane.scrollTop + (fRect.top - dRect.top) - Math.round(dPane.clientHeight * 0.28);
+          smoothScrollElementTo(dPane, targetDocTop, 220);
+        }
+        requestAnimationFrame(() => alignCardInRightPane(threadId, undefined, 220));
       }
     }
   };
@@ -1035,6 +1270,88 @@
 
   window.triggerOpenFile = function () {
     document.getElementById('docxFileInput').click();
+  };
+
+  window.loadBuiltInDemo = async function () {
+    // Construct a clean minimal valid .docx archive in memory with 2 rows & 12 comments for instant interactive testing
+    const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const w14Ns = 'http://schemas.microsoft.com/office/word/2010/wordml';
+    const w15Ns = 'http://schemas.microsoft.com/office/word/2012/wordml';
+    const pairs = [
+      [
+        '我在这里与你们说话并不是普通的谈话，你们需慎重对待才是，更需对我的话多作揣摩。谈到神的性情你们更是不愿多多斟酌一番，很少有人在这个问题上下功夫。难怪你们都目中无神，生活中无真理，这样的一班人怎么能称作是圣徒呢？既然你们对此知之甚少，那我就只好多费口舌了。',
+        'I speak with you today not as in ordinary conversation, so it behooves you to approach My words carefully, and even more so to reflect upon them more. You are even less willing to ponder more the disposition of God; seldom does anyone put effort into it. No wonder that you have no regard for God and no truth in your lives; how can such a group of people be deemed saints? Since you have so little understanding of this, I have no choice but to expend more breath.'
+      ],
+      [
+        '神的性情对每一个人都是一个很抽象的问题，因为他的性情不同于一个人的性格。神自己有自己的所是所有，他的一切发表与流露代表他自己的实质。他的性情中所包括的有对人类的爱、对人类的抚慰，更有对人类望眼欲穿的了解。神的性情是最高权力的象征，任何一个人或任何一些人都不能也不可能搅扰他的工作与他的性情。',
+        'The disposition of God is a subject that seems very abstract to everyone, for His disposition is unlike a human being’s personality. God Himself has His own possessions and being, and all that He expresses and is revealed from Him represents His own essence. His disposition encompasses His love for mankind, solace toward mankind, and even more, a thorough understanding of mankind. His disposition is the symbol of the highest power; no person or persons can disturb His work or His disposition.'
+      ]
+    ];
+    const items = [
+      { r: 0, za: '在这里', en: 'today', cmt: '原文【在这里】表空间（here），译文译作时间词 today（今天），请核查。', rep: '已核对，拟改为 here' },
+      { r: 0, za: '慎重', en: 'carefully', cmt: '【慎重】侧重态度严肃郑重，carefully 偏小心仔细，请斟酌。' },
+      { r: 0, za: '揣摩', en: 'reflect upon', cmt: '术语表【揣摩（神话）】用 ponder，reflect upon 对应【反省】。' },
+      { r: 0, za: '多多斟酌一番', en: 'ponder more', cmt: '比较级 ponder more 预设原本已在揣摩，与后半句矛盾。' },
+      { r: 0, za: '无真理', en: 'no truth', cmt: '【真理】须加定冠词 the truth，请看是否改为 are without the truth。' },
+      { r: 0, za: '知之甚少', en: 'have so little understanding', cmt: '【知】译为 understanding 与本篇核心词【了解】撞词。' },
+      { r: 1, za: '都是一个很抽象', en: 'seems very abstract', cmt: '原文为直接判断【是】，译文增译 seems 弱化为主观印象。' },
+      { r: 1, za: '所是所有', en: 'possessions and being', cmt: '此处原文词序为【所是所有】，请确认是否调整为 being and possessions。' },
+      { r: 1, za: '发表与流露', en: 'that He expresses and is revealed', cmt: '同一个 that 先作宾语后直接作被动主语，存在并列从句语法问题。' },
+      { r: 1, za: '望眼欲穿', en: 'thorough', cmt: '【望眼欲穿】强调殷切期盼，thorough（透彻的）丢失了期盼之意。' }
+    ];
+
+    const buildCellXml = (rIdx, colIdx, text) => {
+      let cuts = [0, text.length];
+      const marks = [];
+      items.forEach((it, idx) => {
+        if (it.r !== rIdx) return;
+        const sub = colIdx === 0 ? it.za : it.en;
+        const pos = text.indexOf(sub);
+        if (pos >= 0) {
+          cuts.push(pos, pos + sub.length);
+          marks.push({ a: pos, b: pos + sub.length, cid: idx + 1, isAnchor: colIdx === 0, hasRep: !!it.rep });
+        }
+      });
+      cuts = Array.from(new Set(cuts)).sort((a, b) => a - b);
+      let runsXml = '';
+      for (let i = 0; i < cuts.length - 1; i++) {
+        const a = cuts[i], b = cuts[i + 1];
+        if (a >= b) continue;
+        const seg = text.slice(a, b);
+        const m = marks.find(x => x.a <= a && b <= x.b);
+        if (m && m.isAnchor && m.a === a) {
+          runsXml += `<w:commentRangeStart w:id="${m.cid}"/>` + (m.hasRep ? `<w:commentRangeStart w:id="101"/>` : '');
+        }
+        const hlXml = m ? `<w:rPr><w:highlight w:val="cyan"/></w:rPr>` : '';
+        runsXml += `<w:r>${hlXml}<w:t xml:space="preserve">${seg}</w:t></w:r>`;
+        if (m && m.isAnchor && m.b === b) {
+          runsXml += `<w:commentRangeEnd w:id="${m.cid}"/><w:r><w:commentReference w:id="${m.cid}"/></w:r>`;
+          if (m.hasRep) runsXml += `<w:commentRangeEnd w:id="101"/><w:r><w:commentReference w:id="101"/></w:r>`;
+        }
+      }
+      return `<w:tc><w:p>${runsXml}</w:p></w:tc>`;
+    };
+
+    const trsXml = pairs.map((pr, ri) => `<w:tr>${buildCellXml(ri, 0, pr[0])}${buildCellXml(ri, 1, pr[1])}</w:tr>`).join('');
+    const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="${wNs}"><w:body><w:tbl>${trsXml}</w:tbl></w:body></w:document>`;
+    const cmtsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="${wNs}" xmlns:w14="${w14Ns}">` +
+      items.map((it, idx) => `<w:comment w:id="${idx + 1}" w:author="审校" w:date="2026-11-18T01:00:00Z" w:initials="RV"><w:p w14:paraId="1000000${idx}"><w:r><w:t>${it.cmt}</w:t></w:r></w:p></w:comment>`).join('') +
+      `<w:comment w:id="101" w:author="译者" w:date="2026-11-18T02:00:00Z" w:initials="TR"><w:p w14:paraId="20000001"><w:r><w:t>${items[0].rep}</w:t></w:r></w:p></w:comment></w:comments>`;
+    const exXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w15:commentsEx xmlns:w15="${w15Ns}">` +
+      items.map((_, idx) => `<w15:commentEx w15:paraId="1000000${idx}" w15:done="0"/>`).join('') +
+      `<w15:commentEx w15:paraId="20000001" w15:paraIdParent="10000000" w15:done="0"/></w15:commentsEx>`;
+    const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/></Relationships>`;
+    const ctXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/></Types>`;
+
+    const files = new Map([
+      ['[Content_Types].xml', ctXml],
+      ['word/document.xml', docXml],
+      ['word/comments.xml', cmtsXml],
+      ['word/commentsExtended.xml', exXml],
+      ['word/_rels/document.xml.rels', relsXml]
+    ]);
+    const zipBytes = await window.ZipCodec.writeZip({ order: Array.from(files.keys()), files });
+    await openDocxFile(new File([zipBytes], '示例双语批注稿.docx'));
   };
 
   window.exportCurrentDocx = exportCurrentDocx;
