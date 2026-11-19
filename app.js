@@ -534,7 +534,7 @@
         tPos += len;
       }
 
-      // Thread anchors & active spotlight spans in this paragraph
+      // Thread anchors & linked English spans in this paragraph
       const paraThreads = docState.threads.filter(
         th => th.anchor.row === rowIdx && th.anchor.col === colIdx && th.anchor.pIdx === pIdx
       );
@@ -545,6 +545,23 @@
           cuts.add(th.anchor.end);
           if (!pinsAtOffset.has(th.anchor.end)) pinsAtOffset.set(th.anchor.end, []);
           pinsAtOffset.get(th.anchor.end).push(th);
+        }
+      }
+
+      // Also place matching numbered badges at the end of linked spans (e.g. right English column)
+      const linkPinsAtOffset = new Map();
+      for (const th of docState.threads) {
+        if (!th.linkedSpans || !th.linkedSpans.length) continue;
+        for (const lk of th.linkedSpans) {
+          if (lk.row !== rowIdx || lk.col !== colIdx || lk.pIdx !== pIdx) continue;
+          if (lk.end <= lk.start) continue;
+          if (lk.start >= localSliceStart && lk.start <= localSliceEnd) cuts.add(lk.start);
+          if (lk.end > localSliceStart && lk.end <= localSliceEnd) {
+            cuts.add(lk.end);
+            if (!linkPinsAtOffset.has(lk.end)) linkPinsAtOffset.set(lk.end, []);
+            const arr = linkPinsAtOffset.get(lk.end);
+            if (!arr.some(x => x.id === th.id)) arr.push(th);
+          }
         }
       }
 
@@ -654,15 +671,31 @@
         }
 
         // Emit pins whose anchor.end === segB (excluding zero-length already emitted)
+        const emittedPinIds = new Set();
         if (pinsAtOffset.has(segB)) {
           const nonZero = pinsAtOffset.get(segB).filter(th => th.anchor.end > th.anchor.start);
           if (nonZero.length) {
             htmlOut += nonZero.map(th => {
+              emittedPinIds.add(th.id);
               const ord = threadOrderMap.get(th.id) || '?';
               const actCls = (activeThread && activeThread.id === th.id) ? 'pin-active' : '';
               const doneCls = th.done ? 'pin-done' : '';
               const repBadge = th.replies.length ? `·${th.replies.length + 1}` : '';
               return `<sup class="cmt-pin ${actCls} ${doneCls}" data-thread-id="${th.id}" title="点击定位并放大第 #${ord} 号批注">${ord}${repBadge}</sup>`;
+            }).join('');
+          }
+        }
+        // Emit matching numbered badges for linked spans (e.g. right English column)
+        if (linkPinsAtOffset.has(segB)) {
+          const linkList = linkPinsAtOffset.get(segB)
+            .filter(th => !emittedPinIds.has(th.id))
+            .sort((a, b) => (threadOrderMap.get(a.id) || 0) - (threadOrderMap.get(b.id) || 0));
+          if (linkList.length) {
+            htmlOut += linkList.map(th => {
+              const ord = threadOrderMap.get(th.id) || '?';
+              const actCls = (activeThread && activeThread.id === th.id) ? 'pin-active' : '';
+              const doneCls = th.done ? 'pin-done' : '';
+              return `<sup class="cmt-pin cmt-pin-link ${actCls} ${doneCls}" data-thread-id="${th.id}" title="对应第 #${ord} 号批注（点击双向高亮）">${ord}</sup>`;
             }).join('');
           }
         }

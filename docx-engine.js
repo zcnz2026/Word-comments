@@ -980,70 +980,117 @@
         );
         const blkAllHl = [...blkCyan, ...blkGreen];
         const usedHlSet = new Set();
-
-        // Pass 1: Quote-first matching — match English phrases cited in the comment text directly inside this block
         const matchedThreads = new Set();
-        for (const th of blkThreads) {
-          const phrases = extractEnglishQuotesFromThread(th);
-          let linkedAny = false;
-          for (const ph of phrases) {
-            const hits = findEnOccurrences(enNorm, normEnForMatch(ph), blk.enSpan[0], blk.enSpan[1]);
-            if (!hits.length) continue;
-            const hit = hits[0];
-            // Check if this hit overlaps an existing Word highlight in the block
-            const overlapHl = blkAllHl.find(rg => rg.cellStart < hit.end && rg.cellEnd > hit.start);
-            if (overlapHl) {
-              if (!th.linkedSpans.some(s => s.pIdx === overlapHl.pIdx && s.start === overlapHl.start && s.end === overlapHl.end)) {
-                th.linkedSpans.push({
-                  row: rIdx, col: 1, pIdx: overlapHl.pIdx, start: overlapHl.start, end: overlapHl.end,
-                  color: overlapHl.hl === 'green' ? 'green' : overlapHl.hl
-                });
-              }
-              usedHlSet.add(overlapHl);
-              linkedAny = true;
-            } else {
-              // Even if the English phrase had no Word highlight, link its exact span for spotlight zoom on click
-              const stP = cellOffsetToParaOffset(rObj.cells[1], hit.start);
-              const enP = cellOffsetToParaOffset(rObj.cells[1], hit.end);
-              if (stP.pIdx === enP.pIdx && enP.off > stP.off) {
-                if (!th.linkedSpans.some(s => s.pIdx === stP.pIdx && s.start === stP.off && s.end === enP.off)) {
-                  th.linkedSpans.push({
-                    row: rIdx, col: 1, pIdx: stP.pIdx, start: stP.off, end: enP.off, color: 'cyan'
-                  });
-                }
-                linkedAny = true;
+        const zhSpanLen = Math.max(1, blk.zhSpan[1] - blk.zhSpan[0]);
+        const enSpanLen = Math.max(1, blk.enSpan[1] - blk.enSpan[0]);
+
+        const threadMeta = blkThreads.map(th => {
+          const combined = [th.text || '', ...(th.replies || []).map(r => r.text || '')].join('\n');
+          const cNorm = normEnForMatch(combined);
+          const zhPos = paraOffsetToCellOffset(rObj.cells[0], th.anchor.pIdx, th.anchor.start);
+          return {
+            th,
+            cNorm,
+            phrases: extractEnglishQuotesFromThread(th),
+            zhRel: (zhPos - blk.zhSpan[0]) / zhSpanLen
+          };
+        });
+
+        // Pass 1A: Highlight-first matching — assign every Word highlight in the block to the thread that cites it
+        for (const rg of blkAllHl) {
+          const rgRaw = enFull.slice(rg.cellStart, rg.cellEnd).trim();
+          const rgNorm = normEnForMatch(rgRaw);
+          if (!rgNorm) continue;
+          const enRel = (rg.cellStart - blk.enSpan[0]) / enSpanLen;
+
+          let bestMeta = null;
+          let bestScore = 0;
+
+          for (const tm of threadMeta) {
+            let score = 0;
+            // Direct word-boundary match of the highlighted English text inside the comment
+            if (rgNorm.length >= 2) {
+              const directHits = findEnOccurrences(tm.cNorm, rgNorm, 0, tm.cNorm.length);
+              if (directHits.length > 0) {
+                score = Math.max(score, 10 + Math.min(20, rgNorm.length));
               }
             }
-            if (linkedAny && ph.includes(' ')) break; // One strong multi-word match is enough
+            // Or a quoted English phrase from the comment overlaps this highlight
+            for (const ph of tm.phrases) {
+              const phNorm = normEnForMatch(ph);
+              if (phNorm.length < 3) continue;
+              if (rgNorm.includes(phNorm) || phNorm.includes(rgNorm)) {
+                score = Math.max(score, 6 + Math.min(16, Math.min(rgNorm.length, phNorm.length)));
+              }
+            }
+            if (score > 0) {
+              // Slight positional tie-breaker so repeated words pick the closest Chinese anchor
+              const finalScore = score - Math.abs(enRel - tm.zhRel) * 2.5;
+              if (finalScore > bestScore) {
+                bestScore = finalScore;
+                bestMeta = tm;
+              }
+            }
           }
-          if (linkedAny) matchedThreads.add(th);
+
+          if (bestMeta) {
+            const th = bestMeta.th;
+            if (!th.linkedSpans.some(s => s.pIdx === rg.pIdx && s.start === rg.start && s.end === rg.end)) {
+              th.linkedSpans.push({
+                row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end,
+                color: rg.hl === 'green' ? 'green' : rg.hl
+              });
+            }
+            usedHlSet.add(rg);
+            matchedThreads.add(th);
+          }
         }
 
-        // Pass 2: Positional fallback for any remaining unlinked threads & unlinked highlights
-        const remThreads = blkThreads.filter(th => !matchedThreads.has(th));
+        // Pass 1B: For threads that still have no linked Word highlight, match quoted English phrases in plain text
+        for (const tm of threadMeta) {
+          if (matchedThreads.has(tm.th)) continue;
+          for (const ph of tm.phrases) {
+            const hits = findEnOccurrences(enNorm, normEnForMatch(ph), blk.enSpan[0], blk.enSpan[1]);
+            if (!hits.length) continue;
+            // Pick occurrence closest to expected relative position
+            hits.sort((a, b) => Math.abs(((a.start - blk.enSpan[0]) / enSpanLen) - tm.zhRel) - Math.abs(((b.start - blk.enSpan[0]) / enSpanLen) - tm.zhRel));
+            const hit = hits[0];
+            const stP = cellOffsetToParaOffset(rObj.cells[1], hit.start);
+            const enP = cellOffsetToParaOffset(rObj.cells[1], hit.end);
+            if (stP.pIdx === enP.pIdx && enP.off > stP.off) {
+              if (!tm.th.linkedSpans.some(s => s.pIdx === stP.pIdx && s.start === stP.off && s.end === enP.off)) {
+                tm.th.linkedSpans.push({
+                  row: rIdx, col: 1, pIdx: stP.pIdx, start: stP.off, end: enP.off, color: 'cyan'
+                });
+              }
+              matchedThreads.add(tm.th);
+              if (ph.includes(' ')) break;
+            }
+          }
+        }
+
+        // Pass 2: Positional fallback for any remaining unlinked highlights (assign to nearest thread in block)
         const remCyan = blkCyan.filter(rg => !usedHlSet.has(rg));
         const remGreen = blkGreen.filter(rg => !usedHlSet.has(rg));
-        if (blkThreads.length === 1 && remThreads.length === 1 && (remCyan.length || remGreen.length)) {
-          remThreads[0].linkedSpans.push(
+        const remThreads = threadMeta.filter(tm => !matchedThreads.has(tm.th));
+        if (blkThreads.length === 1 && (remCyan.length || remGreen.length)) {
+          blkThreads[0].linkedSpans.push(
             ...remCyan.map(rg => ({ row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end, color: rg.hl })),
             ...remGreen.map(rg => ({ row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end, color: 'green' }))
           );
-        } else if (remThreads.length >= 1 && remCyan.length > 0) {
-          const zhSpanLen = Math.max(1, blk.zhSpan[1] - blk.zhSpan[0]);
-          const enSpanLen = Math.max(1, blk.enSpan[1] - blk.enSpan[0]);
-          for (const th of remThreads) {
-            const zhPos = paraOffsetToCellOffset(rObj.cells[0], th.anchor.pIdx, th.anchor.start);
-            const zhRel = (zhPos - blk.zhSpan[0]) / zhSpanLen;
-            let bestRg = null;
+        } else if (remCyan.length > 0 && threadMeta.length > 0) {
+          const candidates = remThreads.length > 0 ? remThreads : threadMeta;
+          for (const rg of remCyan) {
+            const enRel = (rg.cellStart - blk.enSpan[0]) / enSpanLen;
+            let bestTm = null;
             let bestDist = Infinity;
-            for (const rg of remCyan) {
-              const enRel = (rg.cellStart - blk.enSpan[0]) / enSpanLen;
-              const d = Math.abs(enRel - zhRel);
-              if (d < bestDist) { bestDist = d; bestRg = rg; }
+            for (const tm of candidates) {
+              const d = Math.abs(enRel - tm.zhRel);
+              if (d < bestDist) { bestDist = d; bestTm = tm; }
             }
-            if (bestRg && bestDist < 0.35) {
-              th.linkedSpans.push({
-                row: rIdx, col: 1, pIdx: bestRg.pIdx, start: bestRg.start, end: bestRg.end, color: bestRg.hl
+            if (bestTm && bestDist < 0.45) {
+              bestTm.th.linkedSpans.push({
+                row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end, color: rg.hl
               });
             }
           }

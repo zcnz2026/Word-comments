@@ -531,14 +531,25 @@ body.view-inline .comments-pane {
   transform: scale(1.16);
 }
 
+.cmt-pin.cmt-pin-link {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #38bdf8;
+  padding: 1px 4px;
+}
+
 .cmt-pin.pin-active {
   background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
   transform: scale(1.22);
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.35);
 }
 
 .cmt-pin.pin-done {
   background: var(--success);
+  color: #ffffff;
+  border-color: var(--success);
 }
 
 /* Track Changes inline tokens */
