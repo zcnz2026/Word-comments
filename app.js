@@ -622,6 +622,7 @@
 
         const focusHit = activeFocusSpans.find(sp => sp.start <= segA && segB <= sp.end);
         const linkedThreadId = findThreadForOffset(segA);
+        const directAnchorHit = paraThreads.some(th => segA >= th.anchor.start && segB <= th.anchor.end);
 
         const cls = ['doc-seg'];
         if (tok.hl === 'cyan') cls.push('hl-cyan');
@@ -630,6 +631,7 @@
         else if (tok.hl === 'magenta') cls.push('hl-magenta');
         else if (tok.hl === 'red') cls.push('hl-red');
         else if (tok.hl === 'lightGray' || tok.hl === 'darkGray') cls.push('hl-gray');
+        else if (directAnchorHit) cls.push('cmt-anchor-soft');
 
         if (tok.bold) cls.push('fmt-bold');
         if (tok.underline) cls.push('fmt-underline');

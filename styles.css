@@ -467,6 +467,13 @@ body.view-inline .comments-pane {
   background: #e2e8f0;
 }
 
+/* Subtle visual cue for Word comment anchors that have no <w:highlight> in the source .docx */
+.cmt-anchor-soft {
+  background: rgba(14, 165, 233, 0.11);
+  border-bottom: 1.5px dashed rgba(2, 132, 199, 0.55);
+  cursor: pointer;
+}
+
 .fmt-bold {
   font-weight: 700;
 }

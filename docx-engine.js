@@ -397,7 +397,60 @@
     return spans.length ? spans : [[0, n]];
   }
 
-  function computeRowSentenceBlocks(rowModel) {
+  const QUOTE_STOPWORDS = new Set([
+    'about', 'after', 'again', 'against', 'already', 'always', 'another', 'because',
+    'before', 'being', 'between', 'cannot', 'change', 'chinese', 'claude', 'comment',
+    'could', 'different', 'does', 'during', 'english', 'every', 'first', 'gemini',
+    'having', 'however', 'instead', 'maybe', 'might', 'never', 'other', 'please',
+    'rather', 'replace', 'second', 'should', 'since', 'something', 'still', 'table',
+    'their', 'there', 'these', 'thing', 'think', 'third', 'those', 'though', 'through',
+    'under', 'using', 'where', 'whether', 'which', 'while', 'without', 'would', 'team'
+  ]);
+
+  function normEnForMatch(s) {
+    return (s || '').toLowerCase().replace(/[’‘]/g, "'").replace(/[“”]/g, '"');
+  }
+
+  function extractEnglishQuotesFromThread(th) {
+    const combined = [th.text || '', ...(th.replies || []).map(r => r.text || '')].join('\n');
+    const found = new Set();
+    // Multi-word English phrases (2 to 7 words)
+    const multiRe = /[A-Za-z][A-Za-z'’\-]*(?:\s+[A-Za-z][A-Za-z'’\-]*){1,6}/g;
+    let m;
+    while ((m = multiRe.exec(combined)) !== null) {
+      const phrase = m[0].trim();
+      if (phrase.length >= 5) found.add(phrase);
+    }
+    // Single distinctive English words (length >= 5, not common meta-words)
+    const singleRe = /\b[A-Za-z][A-Za-z'’\-]{4,}\b/g;
+    while ((m = singleRe.exec(combined)) !== null) {
+      const w = m[0].trim();
+      if (!QUOTE_STOPWORDS.has(w.toLowerCase())) found.add(w);
+    }
+    // Sort longest-first so multi-word quotes take precedence
+    return Array.from(found).sort((a, b) => b.length - a.length).slice(0, 12);
+  }
+
+  function findEnOccurrences(enNorm, phraseNorm, rangeStart, rangeEnd) {
+    const hits = [];
+    if (!phraseNorm) return hits;
+    const isWordCh = (ch) => /[a-z0-9']/.test(ch);
+    let pos = rangeStart;
+    while (pos < rangeEnd) {
+      const idx = enNorm.indexOf(phraseNorm, pos);
+      if (idx === -1 || idx + phraseNorm.length > rangeEnd) break;
+      const beforeOk = idx === 0 || !isWordCh(enNorm[idx - 1]);
+      const afterPos = idx + phraseNorm.length;
+      const afterOk = afterPos >= enNorm.length || !isWordCh(enNorm[afterPos]);
+      if (beforeOk && afterOk) {
+        hits.push({ start: idx, end: afterPos });
+      }
+      pos = idx + 1;
+    }
+    return hits;
+  }
+
+  function computeRowSentenceBlocks(rowModel, rowThreads) {
     const zhFull = getCellFullText(rowModel.cells[0]);
     const enFull = rowModel.cells[1] ? getCellFullText(rowModel.cells[1]) : '';
     if (!rowModel.cells[1] || !zhFull.length || !enFull.length) {
@@ -406,56 +459,204 @@
     const zs = splitZhSentences(zhFull);
     const es = splitEnSentences(enFull);
     const nz = zs.length, ne = es.length;
-    const blocks = [];
-    let z = 0;
-    let ePrev = 0;
-    while (z < nz) {
-      let zEnd = z + 1;
-      if (zEnd === nz) {
-        blocks.push({
-          zStart: z,
-          zEnd: nz,
-          label: nz - z === 1 ? `S${z + 1}` : `S${z + 1}–S${nz}`,
-          zhSpan: [zs[z][0], zs[nz - 1][1]],
-          enSpan: [ePrev < ne ? es[ePrev][0] : enFull.length, enFull.length]
-        });
-        break;
-      }
-      const targetFrac = zs[zEnd - 1][1] / zhFull.length;
-      // Find English sentence boundary closest to targetFrac
-      let bestE = ePrev;
-      let bestDiff = Infinity;
-      for (let cand = ePrev; cand <= ne; cand++) {
-        const candPos = cand === 0 ? 0 : es[cand - 1][1];
-        const diff = Math.abs((candPos / enFull.length) - targetFrac);
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          bestE = cand;
-        }
-      }
-      // Merge short consecutive Chinese sentences if they share the same English sentence
-      while (bestE <= ePrev && zEnd < nz) {
-        zEnd++;
-        if (zEnd === nz) { bestE = ne; break; }
-        const tf = zs[zEnd - 1][1] / zhFull.length;
-        for (let cand = ePrev + 1; cand <= ne; cand++) {
-          const diff = Math.abs((es[cand - 1][1] / enFull.length) - tf);
-          if (diff < bestDiff) { bestDiff = diff; bestE = cand; }
-        }
-      }
-      if (bestE <= ePrev) bestE = Math.min(ne, ePrev + 1);
-      const enStartChar = ePrev < ne ? es[ePrev][0] : enFull.length;
-      const enEndChar = bestE > 0 ? es[Math.min(ne, bestE) - 1][1] : enStartChar;
-      blocks.push({
-        zStart: z,
-        zEnd: zEnd,
-        label: zEnd - z === 1 ? `S${z + 1}` : `S${z + 1}–S${zEnd}`,
-        zhSpan: [zs[z][0], zs[zEnd - 1][1]],
-        enSpan: [enStartChar, enEndChar]
-      });
-      ePrev = bestE;
-      z = zEnd;
+    if (nz === 1) {
+      return [{ zStart: 0, zEnd: 1, label: 'S1', zhSpan: [0, zhFull.length], enSpan: [0, enFull.length] }];
     }
+    if (ne === 1) {
+      return [{ zStart: 0, zEnd: nz, label: `S1–S${nz}`, zhSpan: [0, zhFull.length], enSpan: [0, enFull.length] }];
+    }
+
+    const enNorm = normEnForMatch(enFull);
+    const zhLenTotal = Math.max(1, zhFull.length);
+    const enLenTotal = Math.max(1, enFull.length);
+    const avgRatio = enLenTotal / zhLenTotal;
+
+    // Precompute punctuation & newline features per sentence
+    const zhMeta = zs.map(([s, e]) => {
+      const raw = zhFull.slice(s, e);
+      const tr = raw.trimEnd();
+      const last = tr.replace(/[”’"'）】》」』]+$/g, '').slice(-1);
+      return {
+        len: Math.max(1, tr.trim().length),
+        isQ: last === '？' || last === '?',
+        isEx: last === '！' || last === '!',
+        endsNl: raw.endsWith('\n')
+      };
+    });
+    const enMeta = es.map(([s, e]) => {
+      const raw = enFull.slice(s, e);
+      const tr = raw.trimEnd();
+      const last = tr.replace(/[”’"')\]>]+$/g, '').slice(-1);
+      return {
+        len: Math.max(1, tr.trim().length),
+        isQ: last === '?',
+        isEx: last === '!',
+        endsNl: raw.endsWith('\n')
+      };
+    });
+
+    // Build comment-quote anchor votes: zIdx -> Map<eIdx, weight>
+    const anchorVotes = new Map();
+    if (Array.isArray(rowThreads) && rowThreads.length > 0) {
+      const findEnSentIdx = (charPos) => {
+        for (let k = 0; k < ne; k++) {
+          if (charPos >= es[k][0] && charPos < es[k][1]) return k;
+        }
+        return ne - 1;
+      };
+      const winRadius = Math.max(550, Math.floor(enLenTotal * 0.25));
+      for (const th of rowThreads) {
+        if (!th || !th.anchor || th.anchor.col !== 0) continue;
+        const cOff = paraOffsetToCellOffset(rowModel.cells[0], th.anchor.pIdx, th.anchor.start);
+        let zIdx = nz - 1;
+        for (let k = 0; k < nz; k++) {
+          if (cOff >= zs[k][0] && cOff < zs[k][1]) { zIdx = k; break; }
+        }
+        const expectedEn = (cOff / zhLenTotal) * enLenTotal;
+        const phrases = extractEnglishQuotesFromThread(th);
+        let hitsAdded = 0;
+        for (const ph of phrases) {
+          if (hitsAdded >= 3) break;
+          const phNorm = normEnForMatch(ph);
+          const allHits = findEnOccurrences(enNorm, phNorm, 0, enLenTotal);
+          if (!allHits.length) continue;
+          const nearHits = allHits.filter(h => Math.abs(h.start - expectedEn) <= winRadius);
+          const pool = nearHits.length ? nearHits : (allHits.length === 1 ? allHits : []);
+          if (!pool.length) continue;
+          pool.sort((a, b) => Math.abs(a.start - expectedEn) - Math.abs(b.start - expectedEn));
+          const best = pool[0];
+          const eIdx = findEnSentIdx(best.start);
+          let w = ph.length >= 12 ? 3.5 : (ph.includes(' ') ? 2.2 : 0.9);
+          if (allHits.length === 1) w *= 1.6;
+          else if (nearHits.length === 1) w *= 1.25;
+          if (!anchorVotes.has(zIdx)) anchorVotes.set(zIdx, new Map());
+          const m = anchorVotes.get(zIdx);
+          m.set(eIdx, (m.get(eIdx) || 0) + w);
+          hitsAdded++;
+        }
+      }
+    }
+
+    // Dynamic Programming global monotonic alignment
+    const INF = 1e15;
+    const stride = ne + 1;
+    const dp = new Float64Array((nz + 1) * stride);
+    const backDz = new Uint8Array((nz + 1) * stride);
+    const backDe = new Uint8Array((nz + 1) * stride);
+    dp.fill(INF);
+    dp[0] = 0;
+
+    // Band width for very large cells (keeps runtime < 2ms)
+    const useBand = (nz * ne) > 20000;
+    const bandHalf = Math.max(18, Math.ceil(ne * 0.25));
+
+    const TRANSITIONS = [
+      [1, 1, 0.0],
+      [1, 2, 0.08],
+      [1, 3, 0.20],
+      [1, 4, 0.36],
+      [1, 5, 0.56],
+      [2, 1, 0.28],
+      [2, 2, 0.34],
+      [1, 0, 2.60]
+    ];
+
+    for (let z = 0; z < nz; z++) {
+      const centerE = Math.round((z / nz) * ne);
+      const eMin = useBand ? Math.max(0, centerE - bandHalf) : 0;
+      const eMax = useBand ? Math.min(ne, centerE + bandHalf) : ne;
+      for (let e = eMin; e <= eMax; e++) {
+        const curCost = dp[z * stride + e];
+        if (curCost >= INF * 0.5) continue;
+
+        for (let t = 0; t < TRANSITIONS.length; t++) {
+          const [dz, de, prior] = TRANSITIONS[t];
+          const nz2 = z + dz;
+          const ne2 = e + de;
+          if (nz2 > nz || ne2 > ne) continue;
+
+          // Length-ratio cost
+          let zhC = 0;
+          for (let k = z; k < nz2; k++) zhC += zhMeta[k].len;
+          let enC = 0;
+          for (let k = e; k < ne2; k++) enC += enMeta[k].len;
+          const expEn = zhC * avgRatio;
+          const lenCost = Math.abs(enC - expEn) / Math.max(45, expEn * 0.85);
+
+          // Gentle global position regularization
+          const zhFrac = zs[nz2 - 1][1] / zhLenTotal;
+          const enFrac = ne2 > 0 ? (es[ne2 - 1][1] / enLenTotal) : 0;
+          const posCost = 0.55 * Math.abs(zhFrac - enFrac);
+
+          // Punctuation & paragraph-break cues
+          let cueCost = 0;
+          if (de > 0) {
+            const zLast = zhMeta[nz2 - 1];
+            const eLast = enMeta[ne2 - 1];
+            if (zLast.isQ && eLast.isQ) cueCost -= 1.15;
+            else if (zLast.isQ !== eLast.isQ) cueCost += 0.42;
+            if (zLast.isEx && eLast.isEx) cueCost -= 0.55;
+            if (zLast.endsNl && eLast.endsNl) cueCost -= 1.40;
+            else if (zLast.endsNl !== eLast.endsNl) cueCost += 0.55;
+          }
+
+          // Comment-quote anchor cues
+          let anchorCost = 0;
+          for (let k = z; k < nz2; k++) {
+            const votes = anchorVotes.get(k);
+            if (!votes) continue;
+            let hitW = 0, missW = 0;
+            for (const [ev, w] of votes.entries()) {
+              if (ev >= e && ev < ne2) hitW += w;
+              else missW += w;
+            }
+            anchorCost += -Math.min(4.5, hitW * 0.85) + Math.min(4.5, missW * 0.65);
+          }
+
+          const total = curCost + prior + lenCost + posCost + cueCost + anchorCost;
+          const idx2 = nz2 * stride + ne2;
+          if (total < dp[idx2]) {
+            dp[idx2] = total;
+            backDz[idx2] = dz;
+            backDe[idx2] = de;
+          }
+        }
+      }
+    }
+
+    // Backtrack optimal blocks
+    const rawSteps = [];
+    let cz = nz, ce = ne;
+    if (dp[nz * stride + ne] < INF * 0.5) {
+      while (cz > 0 || ce > 0) {
+        const idx = cz * stride + ce;
+        const dz = backDz[idx];
+        const de = backDe[idx];
+        if (!dz && !de) break;
+        rawSteps.push({ zStart: cz - dz, zEnd: cz, eStart: ce - de, eEnd: ce });
+        cz -= dz;
+        ce -= de;
+      }
+      rawSteps.reverse();
+    }
+
+    // Fallback if unreachable (should never happen)
+    if (!rawSteps.length) {
+      return [{ zStart: 0, zEnd: nz, label: `S1–S${nz}`, zhSpan: [0, zhFull.length], enSpan: [0, enFull.length] }];
+    }
+
+    const blocks = rawSteps.map(st => {
+      const enStartChar = st.eStart < ne ? es[st.eStart][0] : enFull.length;
+      const enEndChar = st.eEnd > st.eStart ? es[st.eEnd - 1][1] : enStartChar;
+      return {
+        zStart: st.zStart,
+        zEnd: st.zEnd,
+        label: st.zEnd - st.zStart === 1 ? `S${st.zStart + 1}` : `S${st.zStart + 1}–S${st.zEnd}`,
+        zhSpan: [zs[st.zStart][0], zs[st.zEnd - 1][1]],
+        enSpan: [enStartChar, enEndChar]
+      };
+    });
+
     for (let i = 0; i < blocks.length - 1; i++) {
       blocks[i + 1].enSpan[0] = blocks[i].enSpan[1];
     }
@@ -727,10 +928,13 @@
     const threads = Array.from(rootMap.values());
     sortThreadsInPlace(threads, rows);
 
-    // Compute sentence blocks per row
-    rows.forEach(r => { r.blocks = computeRowSentenceBlocks(r); });
+    // Compute sentence blocks per row (anchor-guided DP using threads)
+    rows.forEach((r, rIdx) => {
+      const rThreads = threads.filter(th => th.anchor.row === rIdx && th.anchor.col === 0);
+      r.blocks = computeRowSentenceBlocks(r, rThreads);
+    });
 
-    // Restore saved linkedSpans OR smart-pair English highlights by aligned sentence block
+    // Restore saved linkedSpans OR smart-pair English highlights/phrases by aligned sentence block
     if (savedAgyLinks && typeof savedAgyLinks === 'object') {
       for (const th of threads) {
         if (Array.isArray(savedAgyLinks[th.cid])) {
@@ -754,8 +958,9 @@
   function autoLinkHighlightsOnImport(threads, rows) {
     rows.forEach((rObj, rIdx) => {
       if (!rObj.cells[1]) return;
+      const enFull = getCellFullText(rObj.cells[1]);
+      const enNorm = normEnForMatch(enFull);
       const enRanges = collectCellHighlightRanges(rObj.cells[1]);
-      if (!enRanges.length) return;
 
       rObj.blocks.forEach((blk) => {
         const blkThreads = threads.filter(th => {
@@ -773,20 +978,75 @@
           rg.hl === 'green' &&
           rg.cellStart >= blk.enSpan[0] && rg.cellStart < blk.enSpan[1]
         );
+        const blkAllHl = [...blkCyan, ...blkGreen];
+        const usedHlSet = new Set();
 
-        if (blkThreads.length === 1) {
-          blkThreads[0].linkedSpans.push(
-            ...blkCyan.map(rg => ({ row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end, color: rg.hl })),
-            ...blkGreen.map(rg => ({ row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end, color: 'green' }))
+        // Pass 1: Quote-first matching — match English phrases cited in the comment text directly inside this block
+        const matchedThreads = new Set();
+        for (const th of blkThreads) {
+          const phrases = extractEnglishQuotesFromThread(th);
+          let linkedAny = false;
+          for (const ph of phrases) {
+            const hits = findEnOccurrences(enNorm, normEnForMatch(ph), blk.enSpan[0], blk.enSpan[1]);
+            if (!hits.length) continue;
+            const hit = hits[0];
+            // Check if this hit overlaps an existing Word highlight in the block
+            const overlapHl = blkAllHl.find(rg => rg.cellStart < hit.end && rg.cellEnd > hit.start);
+            if (overlapHl) {
+              if (!th.linkedSpans.some(s => s.pIdx === overlapHl.pIdx && s.start === overlapHl.start && s.end === overlapHl.end)) {
+                th.linkedSpans.push({
+                  row: rIdx, col: 1, pIdx: overlapHl.pIdx, start: overlapHl.start, end: overlapHl.end,
+                  color: overlapHl.hl === 'green' ? 'green' : overlapHl.hl
+                });
+              }
+              usedHlSet.add(overlapHl);
+              linkedAny = true;
+            } else {
+              // Even if the English phrase had no Word highlight, link its exact span for spotlight zoom on click
+              const stP = cellOffsetToParaOffset(rObj.cells[1], hit.start);
+              const enP = cellOffsetToParaOffset(rObj.cells[1], hit.end);
+              if (stP.pIdx === enP.pIdx && enP.off > stP.off) {
+                if (!th.linkedSpans.some(s => s.pIdx === stP.pIdx && s.start === stP.off && s.end === enP.off)) {
+                  th.linkedSpans.push({
+                    row: rIdx, col: 1, pIdx: stP.pIdx, start: stP.off, end: enP.off, color: 'cyan'
+                  });
+                }
+                linkedAny = true;
+              }
+            }
+            if (linkedAny && ph.includes(' ')) break; // One strong multi-word match is enough
+          }
+          if (linkedAny) matchedThreads.add(th);
+        }
+
+        // Pass 2: Positional fallback for any remaining unlinked threads & unlinked highlights
+        const remThreads = blkThreads.filter(th => !matchedThreads.has(th));
+        const remCyan = blkCyan.filter(rg => !usedHlSet.has(rg));
+        const remGreen = blkGreen.filter(rg => !usedHlSet.has(rg));
+        if (blkThreads.length === 1 && remThreads.length === 1 && (remCyan.length || remGreen.length)) {
+          remThreads[0].linkedSpans.push(
+            ...remCyan.map(rg => ({ row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end, color: rg.hl })),
+            ...remGreen.map(rg => ({ row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end, color: 'green' }))
           );
-        } else if (blkCyan.length > 0) {
-          // Pair monotonically by relative position in block
-          blkCyan.forEach((rg, idx) => {
-            const targetIdx = Math.min(blkThreads.length - 1, Math.floor((idx * blkThreads.length) / blkCyan.length));
-            blkThreads[targetIdx].linkedSpans.push({
-              row: rIdx, col: 1, pIdx: rg.pIdx, start: rg.start, end: rg.end, color: rg.hl
-            });
-          });
+        } else if (remThreads.length >= 1 && remCyan.length > 0) {
+          const zhSpanLen = Math.max(1, blk.zhSpan[1] - blk.zhSpan[0]);
+          const enSpanLen = Math.max(1, blk.enSpan[1] - blk.enSpan[0]);
+          for (const th of remThreads) {
+            const zhPos = paraOffsetToCellOffset(rObj.cells[0], th.anchor.pIdx, th.anchor.start);
+            const zhRel = (zhPos - blk.zhSpan[0]) / zhSpanLen;
+            let bestRg = null;
+            let bestDist = Infinity;
+            for (const rg of remCyan) {
+              const enRel = (rg.cellStart - blk.enSpan[0]) / enSpanLen;
+              const d = Math.abs(enRel - zhRel);
+              if (d < bestDist) { bestDist = d; bestRg = rg; }
+            }
+            if (bestRg && bestDist < 0.35) {
+              th.linkedSpans.push({
+                row: rIdx, col: 1, pIdx: bestRg.pIdx, start: bestRg.start, end: bestRg.end, color: bestRg.hl
+              });
+            }
+          }
         }
       });
     });
@@ -1391,8 +1651,11 @@
   function restoreMutableState(docState, snapJson) {
     const data = JSON.parse(snapJson);
     docState.rows = data.rows;
-    docState.rows.forEach(r => { r.blocks = computeRowSentenceBlocks(r); });
     docState.threads = data.threads;
+    docState.rows.forEach((r, rIdx) => {
+      const rThreads = docState.threads.filter(th => th.anchor.row === rIdx && th.anchor.col === 0);
+      r.blocks = computeRowSentenceBlocks(r, rThreads);
+    });
   }
 
   globalScope.DocxEngine = {
