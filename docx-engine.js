@@ -935,11 +935,29 @@
     });
 
     // Restore saved linkedSpans OR smart-pair English highlights/phrases by aligned sentence block
-    if (savedAgyLinks && typeof savedAgyLinks === 'object') {
+    if (savedAgyLinks && typeof savedAgyLinks === 'object' && !Array.isArray(savedAgyLinks)) {
+      const VALID_HL_COLORS = new Set(['cyan', 'green', 'yellow', 'magenta', 'red', 'lightGray', 'darkGray']);
       for (const th of threads) {
-        if (Array.isArray(savedAgyLinks[th.cid])) {
-          th.linkedSpans = savedAgyLinks[th.cid];
+        if (!Object.prototype.hasOwnProperty.call(savedAgyLinks, th.cid)) continue;
+        const rawList = savedAgyLinks[th.cid];
+        if (!Array.isArray(rawList)) continue;
+        const cleanSpans = [];
+        for (const sp of rawList) {
+          if (!sp || typeof sp !== 'object') continue;
+          const r = sp.row, c = sp.col, p = sp.pIdx, st = sp.start, en = sp.end;
+          if (!Number.isInteger(r) || !Number.isInteger(c) || !Number.isInteger(p) ||
+              !Number.isInteger(st) || !Number.isInteger(en)) continue;
+          if (r < 0 || r >= rows.length || c < 0 || c >= (rows[r].cells?.length || 0)) continue;
+          const cell = rows[r].cells[c];
+          if (p < 0 || p >= cell.paras.length) continue;
+          const pLen = paraVisibleText(cell.paras[p]).length;
+          const clampedSt = Math.max(0, Math.min(pLen, st));
+          const clampedEn = Math.max(clampedSt, Math.min(pLen, en));
+          if (clampedEn <= clampedSt) continue;
+          const color = VALID_HL_COLORS.has(sp.color) ? sp.color : 'cyan';
+          cleanSpans.push({ row: r, col: c, pIdx: p, start: clampedSt, end: clampedEn, color });
         }
+        th.linkedSpans = cleanSpans;
       }
     } else {
       autoLinkHighlightsOnImport(threads, rows);
@@ -1504,7 +1522,8 @@
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
   }
 
   async function exportDocxBytes(docState) {

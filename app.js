@@ -9,10 +9,10 @@
   let redoStack = [];
 
   const ui = {
-    viewMode: localStorage.getItem('agy_view_mode') || 'split',     // 'split' | 'inline'
-    editMode: localStorage.getItem('agy_edit_mode') || 'track',     // 'track' | 'direct'
-    scrollSync: localStorage.getItem('agy_scroll_sync') !== '0',    // default ON
-    reviewer: localStorage.getItem('agy_reviewer') || '审校',
+    viewMode: localStorage.getItem('agy_view_mode') === 'inline' ? 'inline' : 'split',     // 'split' | 'inline'
+    editMode: localStorage.getItem('agy_edit_mode') === 'direct' ? 'direct' : 'track',     // 'track' | 'direct'
+    scrollSync: localStorage.getItem('agy_scroll_sync') !== '0',                           // default ON
+    reviewer: String(localStorage.getItem('agy_reviewer') || '审校').slice(0, 64),
     statusFilter: 'ALL',   // 'ALL' | 'OPEN' | 'DONE' | 'REPLIED'
     authorFilter: 'ALL',
     searchQuery: '',
@@ -274,8 +274,14 @@
   }
 
   /* ==================== FILE OPEN & EXPORT ==================== */
+  const MAX_DOCX_FILE_BYTES = 80 * 1024 * 1024; // 80 MB safety cap
+
   async function openDocxFile(file) {
     try {
+      if (!file) return;
+      if (file.size > MAX_DOCX_FILE_BYTES) {
+        throw new Error(`文件过大（${(file.size / 1024 / 1024).toFixed(1)} MB），超过 80 MB 安全上限。`);
+      }
       const buf = await file.arrayBuffer();
       docState = await Engine.loadDocxBuffer(buf, file.name);
       undoStack = [];
@@ -306,7 +312,8 @@
       const blob = new Blob([bytes], {
         type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
       });
-      const base = docState.fileName.replace(/\.docx$/i, '');
+      const rawBase = String(docState.fileName || '未命名文稿').replace(/\.docx$/i, '');
+      const base = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || '未命名文稿';
       const outName = `${base}_已审阅.docx`;
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -377,17 +384,19 @@
   };
 
   window.setViewMode = function (m) {
-    ui.viewMode = m;
-    localStorage.setItem('agy_view_mode', m);
+    const safeMode = m === 'inline' ? 'inline' : 'split';
+    ui.viewMode = safeMode;
+    localStorage.setItem('agy_view_mode', safeMode);
     syncModeButtons();
     renderWorkspace();
   };
 
   window.setEditMode = function (m) {
-    ui.editMode = m;
-    localStorage.setItem('agy_edit_mode', m);
+    const safeMode = m === 'direct' ? 'direct' : 'track';
+    ui.editMode = safeMode;
+    localStorage.setItem('agy_edit_mode', safeMode);
     syncModeButtons();
-    notifyToast(m === 'track' ? '已切换为：修订模式（改词保留红绿痕迹）' : '已切换为：直接改字模式（无痕修改）');
+    notifyToast(safeMode === 'track' ? '已切换为：修订模式（改词保留红绿痕迹）' : '已切换为：直接改字模式（无痕修改）');
   };
 
   window.setStatusFilter = function (f) {
@@ -483,7 +492,8 @@
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function locateSentenceBlockForThread(th) {
@@ -594,18 +604,6 @@
           th.linkedSpans.some(lk => lk.row === rowIdx && lk.col === colIdx && lk.pIdx === pIdx && off >= lk.start && off < lk.end)
         );
         return linked ? linked.id : '';
-      };
-
-      const renderPinsAt = (off) => {
-        const list = pinsAtOffset.get(off);
-        if (!list) return '';
-        return list.map(th => {
-          const ord = threadOrderMap.get(th.id) || '?';
-          const actCls = (activeThread && activeThread.id === th.id) ? 'pin-active' : '';
-          const doneCls = th.done ? 'pin-done' : '';
-          const repBadge = th.replies.length ? `·${th.replies.length + 1}` : '';
-          return `<sup class="cmt-pin ${actCls} ${doneCls}" onclick="window.onPinOrSpanClick(event, '${th.id}')" title="点击查看并放大第 #${ord} 号批注">${ord}${repBadge}</sup>`;
-        }).join('');
       };
 
       const sortedCuts = Array.from(cuts).sort((a, b) => a - b);
